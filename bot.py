@@ -3,13 +3,9 @@ import asyncio
 import logging
 import aiohttp
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-import pandas as pd
-import numpy as np
-from typing import Dict, List, Optional, Tuple
-import ta
 from flask import Flask
 import threading
 
@@ -22,7 +18,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "Bot is running! 🤖", 200
+    return "🤖 Bot is running perfectly! ✅", 200
 
 @app.route('/health')
 def health():
@@ -33,260 +29,89 @@ def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
 
-class TechnicalAnalyzer:
-    """محلل فني متقدم للعملات المشفرة"""
+class SimpleCryptoAnalyzer:
+    """محلل مبسط للعملات المشفرة"""
     
-    def __init__(self):
-        self.timeframes = ['1h', '4h', '1d']
-        
-    async def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> Optional[pd.DataFrame]:
-        """جلب بيانات الأسعار من Binance API"""
+    async def get_simple_price(self, symbol: str):
+        """جلب السعر الحالي والتغيير"""
         try:
-            url = f"https://api.binance.com/api/v3/klines"
-            params = {
-                'symbol': f"{symbol}USDT",
-                'interval': timeframe,
-                'limit': limit
-            }
+            url = f"https://api.binance.com/api/v3/ticker/24hr"
+            params = {'symbol': f"{symbol}USDT"}
             
             timeout = aiohttp.ClientTimeout(total=10)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        if not data:
-                            return None
-                            
-                        df = pd.DataFrame(data, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_asset_volume', 'number_of_trades',
-                            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-                        ])
-                        
-                        # تحويل البيانات للنوع المناسب
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            df[col] = pd.to_numeric(df[col])
-                        
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                        return df
-                    else:
-                        logger.error(f"API Error: {response.status}")
-                        return None
-        except Exception as e:
-            logger.error(f"Error fetching price data: {e}")
-            return None
-
-    def calculate_technical_indicators(self, df: pd.DataFrame) -> Dict:
-        """حساب المؤشرات الفنية"""
-        try:
-            if len(df) < 50:
-                return {}
-                
-            # المتوسطات المتحركة
-            df['sma_20'] = ta.trend.sma_indicator(df['close'], window=20)
-            df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
-            df['ema_12'] = ta.trend.ema_indicator(df['close'], window=12)
-            df['ema_26'] = ta.trend.ema_indicator(df['close'], window=26)
-            
-            # RSI
-            df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-            
-            # MACD
-            macd = ta.trend.MACD(df['close'])
-            df['macd'] = macd.macd()
-            df['macd_signal'] = macd.macd_signal()
-            df['macd_histogram'] = macd.macd_diff()
-            
-            # Bollinger Bands
-            bollinger = ta.volatility.BollingerBands(df['close'])
-            df['bb_upper'] = bollinger.bollinger_hband()
-            df['bb_middle'] = bollinger.bollinger_mavg()
-            df['bb_lower'] = bollinger.bollinger_lband()
-            
-            # Stochastic
-            stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'])
-            df['stoch_k'] = stoch.stoch()
-            df['stoch_d'] = stoch.stoch_signal()
-            
-            # Volume indicators
-            df['volume_sma'] = ta.volume.volume_sma(df['close'], df['volume'], window=20)
-            
-            # Support and Resistance levels
-            df['support'] = df['low'].rolling(window=20).min()
-            df['resistance'] = df['high'].rolling(window=20).max()
-            
-            return df.iloc[-1].to_dict()
-            
-        except Exception as e:
-            logger.error(f"Error calculating indicators: {e}")
-            return {}
-
-    def analyze_trend(self, indicators: Dict) -> Tuple[str, float]:
-        """تحليل الاتجاه العام"""
-        if not indicators:
-            return "غير محدد", 0
-            
-        signals = []
-        
-        try:
-            # تحليل المتوسطات المتحركة
-            close = indicators.get('close', 0)
-            sma_20 = indicators.get('sma_20', 0)
-            sma_50 = indicators.get('sma_50', 0)
-            
-            if close and sma_20:
-                if close > sma_20:
-                    signals.append(1)
-                else:
-                    signals.append(-1)
-                    
-            if sma_20 and sma_50:
-                if sma_20 > sma_50:
-                    signals.append(1)
-                else:
-                    signals.append(-1)
-                    
-            # تحليل MACD
-            macd = indicators.get('macd', 0)
-            macd_signal = indicators.get('macd_signal', 0)
-            
-            if macd and macd_signal:
-                if macd > macd_signal:
-                    signals.append(1)
-                else:
-                    signals.append(-1)
-                    
-            # تحليل RSI
-            rsi = indicators.get('rsi', 50)
-            if rsi:
-                if 30 < rsi < 70:
-                    signals.append(0)  # محايد
-                elif rsi <= 30:
-                    signals.append(1)  # oversold - فرصة شراء
-                else:
-                    signals.append(-1)  # overbought - فرصة بيع
-                    
-            if not signals:
-                return "غير محدد", 0
-                
-            # حساب متوسط الإشارات
-            avg_signal = sum(signals) / len(signals)
-            
-            if avg_signal > 0.3:
-                return "صاعد", avg_signal
-            elif avg_signal < -0.3:
-                return "هابط", avg_signal
-            else:
-                return "محايد", avg_signal
-                
-        except Exception as e:
-            logger.error(f"Error in trend analysis: {e}")
-            return "غير محدد", 0
-
-    def get_entry_exit_points(self, df: pd.DataFrame, indicators: Dict) -> Dict:
-        """تحديد نقاط الدخول والخروج"""
-        try:
-            current_price = indicators.get('close', 0)
-            if not current_price:
-                return {}
-            
-            # حساب نقاط الدعم والمقاومة
-            support_levels = []
-            resistance_levels = []
-            
-            if len(df) >= 20:
-                # آخر 20 قيعان وقمم
-                lows = df['low'].tail(20).tolist()
-                highs = df['high'].tail(20).tolist()
-                
-                support_levels = sorted(set([x for x in lows if x > 0]), reverse=True)[:3]
-                resistance_levels = sorted(set([x for x in highs if x > 0]))[-3:]
-            
-            # نقاط الدخول
-            bb_lower = indicators.get('bb_lower', current_price * 0.95)
-            bb_upper = indicators.get('bb_upper', current_price * 1.05)
-            support = indicators.get('support', current_price * 0.95)
-            resistance = indicators.get('resistance', current_price * 1.05)
-            
-            entry_points = {
-                'buy_zones': [
-                    bb_lower,
-                    support,
-                    current_price * 0.95
-                ],
-                'sell_zones': [
-                    bb_upper,
-                    resistance,
-                    current_price * 1.05
-                ]
-            }
-            
-            # نقاط وقف الخسارة والأهداف
-            stop_loss_buy = min(support_levels) if support_levels else current_price * 0.92
-            stop_loss_sell = max(resistance_levels) if resistance_levels else current_price * 1.08
-            
-            targets = {
-                'buy_targets': [
-                    current_price * 1.03,
-                    current_price * 1.07,
-                    current_price * 1.15
-                ],
-                'sell_targets': [
-                    current_price * 0.97,
-                    current_price * 0.93,
-                    current_price * 0.85
-                ]
-            }
-            
-            return {
-                'entry_points': entry_points,
-                'stop_loss': {'buy': stop_loss_buy, 'sell': stop_loss_sell},
-                'targets': targets,
-                'support_levels': support_levels,
-                'resistance_levels': resistance_levels
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in entry/exit points: {e}")
-            return {}
-
-    async def comprehensive_analysis(self, symbol: str) -> Dict:
-        """تحليل شامل للعملة"""
-        analysis_results = {}
-        
-        for timeframe in self.timeframes:
-            try:
-                df = await self.get_price_data(symbol, timeframe)
-                if df is not None and len(df) > 50:
-                    indicators = self.calculate_technical_indicators(df)
-                    if indicators:
-                        trend, strength = self.analyze_trend(indicators)
-                        entry_exit = self.get_entry_exit_points(df, indicators)
-                        
-                        analysis_results[timeframe] = {
-                            'trend': trend,
-                            'strength': strength,
-                            'indicators': indicators,
-                            'entry_exit': entry_exit,
-                            'price': indicators.get('close', 0),
-                            'volume': indicators.get('volume', 0)
+                        return {
+                            'symbol': symbol,
+                            'price': float(data['lastPrice']),
+                            'change_24h': float(data['priceChangePercent']),
+                            'high_24h': float(data['highPrice']),
+                            'low_24h': float(data['lowPrice']),
+                            'volume': float(data['volume'])
                         }
-                        
-                await asyncio.sleep(0.1)  # تجنب الضغط على API
-                        
-            except Exception as e:
-                logger.error(f"Error analyzing {symbol} {timeframe}: {e}")
-                continue
+                    return None
+        except Exception as e:
+            logger.error(f"Error fetching price for {symbol}: {e}")
+            return None
+    
+    async def get_basic_analysis(self, symbol: str):
+        """تحليل بسيط بناءً على السعر والتغيير"""
+        price_data = await self.get_simple_price(symbol)
+        if not price_data:
+            return None
+            
+        change_24h = price_data['change_24h']
+        price = price_data['price']
         
-        return analysis_results
+        # تحليل بسيط بناءً على التغيير
+        if change_24h > 5:
+            trend = "صاعد قوي"
+            recommendation = "🟢 شراء قوي"
+            confidence = "عالية"
+        elif change_24h > 2:
+            trend = "صاعد"
+            recommendation = "🔵 شراء"
+            confidence = "متوسطة"
+        elif change_24h < -5:
+            trend = "هابط قوي"
+            recommendation = "🔴 بيع قوي"
+            confidence = "عالية"
+        elif change_24h < -2:
+            trend = "هابط"
+            recommendation = "🟠 بيع"
+            confidence = "متوسطة"
+        else:
+            trend = "محايد"
+            recommendation = "⚪ انتظار"
+            confidence = "منخفضة"
+        
+        # حساب أهداف بسيطة
+        targets = {
+            'short': price * 1.03,  # +3%
+            'medium': price * 1.07, # +7%
+            'long': price * 1.15    # +15%
+        }
+        
+        stop_loss = price * 0.92  # -8%
+        
+        return {
+            'price_data': price_data,
+            'trend': trend,
+            'recommendation': recommendation,
+            'confidence': confidence,
+            'targets': targets,
+            'stop_loss': stop_loss
+        }
 
-class CryptoTelegramBot:
-    """بوت تليغرام للتوصيات المشفرة"""
+class SimpleTelegramBot:
+    """بوت تليغرام مبسط للعملات المشفرة"""
     
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
         self.admin_id = int(os.getenv('ADMIN_ID', '0'))
-        self.analyzer = TechnicalAnalyzer()
+        self.analyzer = SimpleCryptoAnalyzer()
         self.user_watchlists = {}
         
         if not self.token:
@@ -295,30 +120,26 @@ class CryptoTelegramBot:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """أمر البداية"""
         welcome_message = """
-🤖 *أهلاً بك في بوت التوصيات المشفرة المتقدم!*
+🤖 *أهلاً بك في بوت التوصيات المشفرة!*
 
 📊 *الخدمات المتاحة:*
-• تحليل فني شامل للعملات
-• نقاط دخول وخروج دقيقة
-• توصيات مبنية على مؤشرات متعددة
+• تحليل أسعار العملات الحية
+• توصيات شراء وبيع
 • مراقبة العملات المفضلة
+• أهداف ووقف خسارة
 
-📝 *الأوامر الأساسية:*
-/analyze BTC - تحليل عملة
-/watch BTC - إضافة للمراقبة
-/watchlist - عرض قائمة المراقبة
-/remove BTC - إزالة من المراقبة
-/help - المساعدة
+📝 *طريقة الاستخدام:*
+• أرسل رمز أي عملة: `BTC`
+• أو استخدم: `/analyze BTC`
 
-💡 *مثال:* أرسل BTC للتحليل السريع
+💡 *مثال:* أرسل `BNB` للحصول على تحليل فوري
 
-🌟 *البوت يعمل 24/7 مجاناً!*
+🚀 *البوت يعمل على Render مجاناً 24/7!*
         """
         
         keyboard = [
-            [InlineKeyboardButton("📊 تحليل سريع", callback_data="quick_analysis")],
-            [InlineKeyboardButton("📋 قائمة المراقبة", callback_data="show_watchlist")],
-            [InlineKeyboardButton("❓ المساعدة", callback_data="help")]
+            [InlineKeyboardButton("📊 تحليل سريع", callback_data="quick_help")],
+            [InlineKeyboardButton("📋 المساعدة", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -334,19 +155,19 @@ class CryptoTelegramBot:
             symbol = context.args[0].upper()
             
             # إرسال رسالة انتظار
-            waiting_msg = await update.message.reply_text(f"🔍 جاري تحليل {symbol}...\nيرجى الانتظار...")
+            waiting_msg = await update.message.reply_text(f"🔍 جاري تحليل {symbol}...")
             
-            # إجراء التحليل الشامل
-            analysis = await self.analyzer.comprehensive_analysis(symbol)
+            # إجراء التحليل
+            analysis = await self.analyzer.get_basic_analysis(symbol)
             
             if not analysis:
-                await waiting_msg.edit_text(f"❌ لم أتمكن من العثور على بيانات لـ {symbol}\nتأكد من صحة رمز العملة")
+                await waiting_msg.edit_text(f"❌ لم أتمكن من العثور على {symbol}\nتأكد من صحة رمز العملة")
                 return
                 
             # تنسيق التقرير
-            report = await self.format_analysis_report(symbol, analysis)
+            report = self.format_analysis_report(symbol, analysis)
             
-            # إنشاء لوحة الأزرار
+            # إنشاء أزرار
             keyboard = [
                 [InlineKeyboardButton("👁️ إضافة للمراقبة", callback_data=f"watch_{symbol}")],
                 [InlineKeyboardButton("🔄 تحديث", callback_data=f"refresh_{symbol}")]
@@ -357,294 +178,64 @@ class CryptoTelegramBot:
             
         except Exception as e:
             logger.error(f"Error in analysis: {e}")
-            try:
-                await waiting_msg.edit_text(f"❌ حدث خطأ أثناء تحليل {symbol}")
-            except:
-                await update.message.reply_text(f"❌ حدث خطأ أثناء تحليل {symbol}")
+            await update.message.reply_text(f"❌ حدث خطأ أثناء تحليل العملة")
 
-    async def format_analysis_report(self, symbol: str, analysis: Dict) -> str:
+    def format_analysis_report(self, symbol: str, analysis: dict) -> str:
         """تنسيق تقرير التحليل"""
         try:
-            if not analysis:
-                return "❌ لا توجد بيانات متاحة"
-                
-            # الحصول على بيانات الإطار الزمني اليومي
-            daily_data = analysis.get('1d', {})
-            hourly_data = analysis.get('1h', {})
-            
-            if not daily_data and not hourly_data:
-                return "❌ لا توجد بيانات كافية للتحليل"
-                
-            # استخدام البيانات المتاحة
-            data = daily_data if daily_data else hourly_data
-            
-            current_price = data.get('price', 0)
-            trend = data.get('trend', 'غير محدد')
-            strength = data.get('strength', 0)
-            indicators = data.get('indicators', {})
-            entry_exit = data.get('entry_exit', {})
-            
-            # تحديد التوصية الرئيسية
-            if strength > 0.5:
-                recommendation = "🟢 شراء قوي"
-                confidence = "عالية"
-            elif strength > 0.2:
-                recommendation = "🔵 شراء"
-                confidence = "متوسطة"
-            elif strength < -0.5:
-                recommendation = "🔴 بيع قوي"
-                confidence = "عالية"
-            elif strength < -0.2:
-                recommendation = "🟠 بيع"
-                confidence = "متوسطة"
-            else:
-                recommendation = "⚪ انتظار"
-                confidence = "منخفضة"
-            
-            # نقاط الدخول والخروج
-            entry_points = entry_exit.get('entry_points', {})
-            targets = entry_exit.get('targets', {})
-            stop_loss = entry_exit.get('stop_loss', {})
+            price_data = analysis['price_data']
             
             # تنسيق السعر
-            if current_price < 0.01:
-                price_str = f"${current_price:.6f}"
-            elif current_price < 1:
-                price_str = f"${current_price:.4f}"
+            price = price_data['price']
+            if price < 0.01:
+                price_str = f"${price:.6f}"
+            elif price < 1:
+                price_str = f"${price:.4f}"
             else:
-                price_str = f"${current_price:.2f}"
+                price_str = f"${price:.2f}"
+            
+            change_24h = price_data['change_24h']
+            change_emoji = "📈" if change_24h >= 0 else "📉"
+            
+            targets = analysis['targets']
             
             report = f"""
 🎯 *تحليل {symbol}/USDT*
 ━━━━━━━━━━━━━━━━━━━━
 
 💰 *السعر الحالي:* {price_str}
-📊 *الاتجاه:* {trend}
-💪 *القوة:* {abs(strength)*100:.1f}%
-🎲 *التوصية:* {recommendation}
-🔮 *الثقة:* {confidence}
+{change_emoji} *التغيير 24س:* {change_24h:+.2f}%
+📊 *الاتجاه:* {analysis['trend']}
+🎲 *التوصية:* {analysis['recommendation']}
+🔮 *مستوى الثقة:* {analysis['confidence']}
 
 ━━━━━━━━━━━━━━━━━━━━
-📈 *المؤشرات الفنية:*
+📈 *بيانات السوق:*
 
-🔸 *RSI:* {indicators.get('rsi', 0):.1f}
-🔸 *MACD:* {'إيجابي' if indicators.get('macd', 0) > indicators.get('macd_signal', 0) else 'سلبي'}
-🔸 *MA20:* ${indicators.get('sma_20', 0):.6f}
-🔸 *MA50:* ${indicators.get('sma_50', 0):.6f}
+🔺 *أعلى 24س:* ${price_data['high_24h']:.4f}
+🔻 *أدنى 24س:* ${price_data['low_24h']:.4f}
+📊 *الحجم:* {price_data['volume']:,.0f}
 
 ━━━━━━━━━━━━━━━━━━━━
-🎯 *نقاط التداول:*
-            """
-            
-            if recommendation.startswith("🟢") or recommendation.startswith("🔵"):
-                # توصية شراء
-                buy_zones = entry_points.get('buy_zones', [current_price])
-                buy_targets = targets.get('buy_targets', [current_price * 1.03, current_price * 1.07, current_price * 1.15])
-                
-                report += f"""
-📌 *مناطق الشراء:*
-🔸 الأولى: ${min(buy_zones):.6f}
-🔸 الثانية: ${max(buy_zones):.6f}
+🎯 *الأهداف المقترحة:*
 
-🎯 *الأهداف:*
-🥇 الأول: ${buy_targets[0]:.6f} (+3%)
-🥈 الثاني: ${buy_targets[1]:.6f} (+7%)
-🥉 الثالث: ${buy_targets[2]:.6f} (+15%)
+🥇 *الهدف الأول:* ${targets['short']:.4f} (+3%)
+🥈 *الهدف الثاني:* ${targets['medium']:.4f} (+7%)
+🥉 *الهدف الثالث:* ${targets['long']:.4f} (+15%)
 
-🛑 *وقف الخسارة:* ${stop_loss.get('buy', current_price * 0.92):.6f}
-                """
-                
-            elif recommendation.startswith("🔴") or recommendation.startswith("🟠"):
-                # توصية بيع
-                sell_zones = entry_points.get('sell_zones', [current_price])
-                sell_targets = targets.get('sell_targets', [current_price * 0.97, current_price * 0.93, current_price * 0.85])
-                
-                report += f"""
-📌 *مناطق البيع:*
-🔸 الأولى: ${min(sell_zones):.6f}
-🔸 الثانية: ${max(sell_zones):.6f}
+🛑 *وقف الخسارة:* ${analysis['stop_loss']:.4f} (-8%)
 
-🎯 *الأهداف:*
-🥇 الأول: ${sell_targets[0]:.6f} (-3%)
-🥈 الثاني: ${sell_targets[1]:.6f} (-7%)
-🥉 الثالث: ${sell_targets[2]:.6f} (-15%)
-
-🛑 *وقف الخسارة:* ${stop_loss.get('sell', current_price * 1.08):.6f}
-                """
-            else:
-                report += """
-⚪ *توصية الانتظار:*
-السوق في حالة محايدة حالياً
-انتظر إشارات أوضح قبل الدخول
-                """
-            
-            report += f"""
 ━━━━━━━━━━━━━━━━━━━━
-⚠️ *تنبيه:* هذا التحليل للأغراض التعليمية فقط
-⏰ *التحديث:* {datetime.now().strftime('%H:%M:%S')}
-🤖 *البوت متاح 24/7*
+⚠️ *تنبيه:* للأغراض التعليمية فقط
+⏰ *الوقت:* {datetime.now().strftime('%H:%M:%S')}
+🌟 *متاح 24/7 على Render*
             """
             
             return report
             
         except Exception as e:
             logger.error(f"Error formatting report: {e}")
-            return f"❌ حدث خطأ في تنسيق التقرير لـ {symbol}"
-
-    async def watchlist_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """عرض قائمة المراقبة"""
-        try:
-            user_id = update.effective_user.id
-            watchlist = self.user_watchlists.get(user_id, [])
-            
-            if not watchlist:
-                await update.message.reply_text("📋 قائمة المراقبة فارغة\nاستخدم /watch [SYMBOL] لإضافة عملة")
-                return
-                
-            # إنشاء لوحة أزرار للعملات
-            keyboard = []
-            for i in range(0, len(watchlist), 2):
-                row = []
-                for j in range(2):
-                    if i + j < len(watchlist):
-                        coin = watchlist[i + j]
-                        row.append(InlineKeyboardButton(f"📊 {coin}", callback_data=f"analyze_{coin}"))
-                keyboard.append(row)
-                
-            keyboard.append([InlineKeyboardButton("🔄 تحديث الكل", callback_data="update_all_watchlist")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            message = f"📋 *قائمة المراقبة ({len(watchlist)} عملة):*\n\n"
-            message += " • ".join(watchlist)
-            
-            await update.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
-            
-        except Exception as e:
-            logger.error(f"Error in watchlist: {e}")
-            await update.message.reply_text("❌ حدث خطأ في عرض قائمة المراقبة")
-
-    async def watch_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إضافة عملة للمراقبة"""
-        try:
-            if not context.args:
-                await update.message.reply_text("❌ يرجى تحديد رمز العملة\nمثال: /watch BTC")
-                return
-                
-            symbol = context.args[0].upper()
-            user_id = update.effective_user.id
-            
-            if user_id not in self.user_watchlists:
-                self.user_watchlists[user_id] = []
-                
-            if symbol in self.user_watchlists[user_id]:
-                await update.message.reply_text(f"👁️ {symbol} موجود بالفعل في قائمة المراقبة")
-                return
-                
-            # التحقق من صحة العملة
-            test_data = await self.analyzer.get_price_data(symbol)
-            if test_data is None:
-                await update.message.reply_text(f"❌ لم أتمكن من العثور على {symbol}")
-                return
-                
-            self.user_watchlists[user_id].append(symbol)
-            await update.message.reply_text(f"✅ تم إضافة {symbol} لقائمة المراقبة")
-            
-        except Exception as e:
-            logger.error(f"Error in watch command: {e}")
-            await update.message.reply_text("❌ حدث خطأ في إضافة العملة")
-
-    async def remove_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """إزالة عملة من المراقبة"""
-        try:
-            if not context.args:
-                await update.message.reply_text("❌ يرجى تحديد رمز العملة\nمثال: /remove BTC")
-                return
-                
-            symbol = context.args[0].upper()
-            user_id = update.effective_user.id
-            
-            if user_id in self.user_watchlists and symbol in self.user_watchlists[user_id]:
-                self.user_watchlists[user_id].remove(symbol)
-                await update.message.reply_text(f"✅ تم إزالة {symbol} من قائمة المراقبة")
-            else:
-                await update.message.reply_text(f"❌ {symbol} غير موجود في قائمة المراقبة")
-                
-        except Exception as e:
-            logger.error(f"Error in remove command: {e}")
-            await update.message.reply_text("❌ حدث خطأ في إزالة العملة")
-
-    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالج الأزرار"""
-        try:
-            query = update.callback_query
-            await query.answer()
-            
-            data = query.data
-            
-            if data.startswith("analyze_"):
-                symbol = data.split("_")[1]
-                context.args = [symbol]
-                await self.analyze_command(update, context)
-                
-            elif data.startswith("watch_"):
-                symbol = data.split("_")[1]
-                user_id = update.effective_user.id
-                
-                if user_id not in self.user_watchlists:
-                    self.user_watchlists[user_id] = []
-                    
-                if symbol not in self.user_watchlists[user_id]:
-                    self.user_watchlists[user_id].append(symbol)
-                    await query.edit_message_text(f"✅ تم إضافة {symbol} لقائمة المراقبة")
-                else:
-                    await query.edit_message_text(f"👁️ {symbol} موجود بالفعل في قائمة المراقبة")
-                    
-            elif data.startswith("refresh_"):
-                symbol = data.split("_")[1]
-                context.args = [symbol]
-                await self.analyze_command(update, context)
-                
-            elif data == "show_watchlist":
-                await self.watchlist_command(update, context)
-                
-            elif data == "help":
-                await self.help_command(update, context)
-                
-        except Exception as e:
-            logger.error(f"Error in button callback: {e}")
-
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """أمر المساعدة"""
-        help_text = """
-📚 *دليل استخدام البوت:*
-
-🔍 *أوامر التحليل:*
-• `/analyze BTC` - تحليل فني شامل
-• أرسل `BTC` مباشرة - تحليل سريع
-
-👁️ *أوامر المراقبة:*
-• `/watch BTC` - إضافة للمراقبة
-• `/watchlist` - عرض القائمة
-• `/remove BTC` - إزالة من القائمة
-
-📊 *معلومات التحليل:*
-• RSI: مؤشر القوة النسبية (30-70 طبيعي)
-• MACD: تقارب وتباعد المتوسطات
-• MA: المتوسطات المتحركة (20, 50)
-• BB: نطاقات بولينجر
-
-🎯 *رموز التوصيات:*
-🟢 شراء قوي | 🔵 شراء
-🔴 بيع قوي | 🟠 بيع
-⚪ انتظار
-
-⚠️ *تحذير مهم:*
-التحليل للأغراض التعليمية فقط
-قم بإجراء بحثك الخاص قبل الاستثمار
-
-🌟 *البوت متاح 24/7 مجاناً!*
-        """
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+            return f"❌ حدث خطأ في تنسيق التقرير"
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالج النصوص العادية"""
@@ -656,22 +247,60 @@ class CryptoTelegramBot:
                 context.args = [text]
                 await self.analyze_command(update, context)
             else:
-                await update.message.reply_text("💡 أرسل رمز العملة للتحليل (مثل: BTC)\nأو استخدم /help للمساعدة")
+                await update.message.reply_text(
+                    "💡 أرسل رمز العملة للتحليل\n"
+                    "مثال: BTC, ETH, BNB\n"
+                    "أو استخدم /start للمساعدة"
+                )
                 
         except Exception as e:
             logger.error(f"Error in text handler: {e}")
-            await update.message.reply_text("❌ حدث خطأ في معالجة الرسالة")
+
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """معالج الأزرار"""
+        try:
+            query = update.callback_query
+            await query.answer()
+            
+            data = query.data
+            
+            if data.startswith("refresh_"):
+                symbol = data.split("_")[1]
+                context.args = [symbol]
+                await self.analyze_command(update, context)
+            elif data == "help":
+                await query.edit_message_text(
+                    "📚 *المساعدة:*\n\n"
+                    "🔍 للتحليل: أرسل رمز العملة مباشرة\n"
+                    "📊 مثال: BTC, ETH, BNB, XRP\n"
+                    "⚡ النتائج فورية ودقيقة!\n\n"
+                    "🤖 البوت متاح 24/7",
+                    parse_mode='Markdown'
+                )
+            elif data == "quick_help":
+                await query.edit_message_text(
+                    "⚡ *تحليل سريع:*\n\n"
+                    "1️⃣ أرسل رمز العملة: `BTC`\n"
+                    "2️⃣ احصل على تحليل فوري\n"
+                    "3️⃣ شاهد الأهداف والتوصيات\n\n"
+                    "💡 جرب الآن: أرسل `ETH`",
+                    parse_mode='Markdown'
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in button callback: {e}")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
-        """معالج الأخطاء العام"""
-        logger.error(f"Exception while handling an update: {context.error}")
+        """معالج الأخطاء"""
+        logger.error(f"Exception: {context.error}")
 
     def run(self):
         """تشغيل البوت"""
         try:
-            # بدء Flask في thread منفصل
+            # بدء Flask
             flask_thread = threading.Thread(target=run_flask, daemon=True)
             flask_thread.start()
+            logger.info("✅ Flask server started")
             
             # إنشاء التطبيق
             application = Application.builder().token(self.token).build()
@@ -679,21 +308,15 @@ class CryptoTelegramBot:
             # إضافة المعالجات
             application.add_handler(CommandHandler("start", self.start_command))
             application.add_handler(CommandHandler("analyze", self.analyze_command))
-            application.add_handler(CommandHandler("watch", self.watch_command))
-            application.add_handler(CommandHandler("watchlist", self.watchlist_command))
-            application.add_handler(CommandHandler("remove", self.remove_command))
-            application.add_handler(CommandHandler("help", self.help_command))
             application.add_handler(CallbackQueryHandler(self.button_callback))
             application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
-            
-            # إضافة معالج الأخطاء
             application.add_error_handler(self.error_handler)
             
-            # إرسال تنبيه للإدمن عند بدء التشغيل
+            logger.info("🤖 Starting Telegram bot...")
+            
+            # إرسال رسالة للإدمن
             if self.admin_id:
                 asyncio.create_task(self.send_startup_message(application))
-            
-            logger.info("🤖 تم تشغيل البوت على Render...")
             
             # بدء التشغيل
             application.run_polling(drop_pending_updates=True)
@@ -703,12 +326,14 @@ class CryptoTelegramBot:
             raise
 
     async def send_startup_message(self, application):
-        """إرسال رسالة بدء التشغيل للإدمن"""
+        """إرسال رسالة بدء التشغيل"""
         try:
-            await asyncio.sleep(2)  # انتظار حتى يبدأ البوت
+            await asyncio.sleep(3)
             await application.bot.send_message(
                 chat_id=self.admin_id,
-                text="🚀 تم تشغيل البوت بنجاح على Render!\n⏰ الوقت: " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                text=f"🚀 البوت شغال على Render!\n"
+                     f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                     f"✅ جاهز لاستقبال الطلبات"
             )
         except Exception as e:
             logger.error(f"Error sending startup message: {e}")
@@ -716,17 +341,16 @@ class CryptoTelegramBot:
 # التشغيل الرئيسي
 if __name__ == "__main__":
     try:
-        # التحقق من متغيرات البيئة
         if not os.getenv('BOT_TOKEN'):
-            print("❌ BOT_TOKEN غير موجود في متغيرات البيئة")
+            print("❌ BOT_TOKEN مطلوب في متغيرات البيئة")
             exit(1)
             
-        # إنشاء وتشغيل البوت
-        bot = CryptoTelegramBot()
+        print("🚀 بدء تشغيل البوت...")
+        bot = SimpleTelegramBot()
         bot.run()
         
     except KeyboardInterrupt:
-        print("🛑 تم إيقاف البوت بواسطة المستخدم")
+        print("🛑 تم إيقاف البوت")
     except Exception as e:
-        print(f"❌ خطأ في تشغيل البوت: {e}")
+        print(f"❌ خطأ: {e}")
         exit(1)
