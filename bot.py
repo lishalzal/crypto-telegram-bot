@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 import requests
-import numpy as np
+import math
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Tuple
 from flask import Flask, request
 import threading
 import json
-import ta  # المكتبة التقنية للمؤشرات الفنية
 
 # إعداد الـ logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -82,57 +81,53 @@ class AdvancedTechnicalAnalyzer:
             return None
 
     def calculate_advanced_indicators(self, data: List[Dict]) -> Dict:
-        """حساب المؤشرات الفنية المتقدمة"""
+        """حساب المؤشرات الفنية المتقدمة بدون مكتبات خارجية"""
         try:
             if len(data) < 50:
                 return {}
             
-            # تحويل البيانات إلى pandas DataFrame للتحليل
-            import pandas as pd
-            
-            df = pd.DataFrame(data)
-            
-            # أسعار الإغلاق والأحجام
-            close = df['close']
-            high = df['high']
-            low = df['low']
-            volume = df['volume']
+            # استخراج البيانات
+            closes = [item['close'] for item in data]
+            highs = [item['high'] for item in data]
+            lows = [item['low'] for item in data]
+            volumes = [item['volume'] for item in data]
             
             indicators = {}
             
-            # المتوسطات المتحركة
-            indicators['ema_9'] = close.ewm(span=9).mean().iloc[-1]
-            indicators['ema_21'] = close.ewm(span=21).mean().iloc[-1]
-            indicators['ema_50'] = close.ewm(span=50).mean().iloc[-1]
-            indicators['ema_200'] = close.ewm(span=200).mean().iloc[-1] if len(close) >= 200 else indicators['ema_50']
+            # المتوسطات المتحركة البسيطة
+            indicators['sma_20'] = self.calculate_sma(closes, 20)
+            indicators['sma_50'] = self.calculate_sma(closes, 50)
+            indicators['sma_200'] = self.calculate_sma(closes, 200) if len(closes) >= 200 else indicators['sma_50']
             
-            indicators['sma_20'] = close.rolling(20).mean().iloc[-1]
-            indicators['sma_50'] = close.rolling(50).mean().iloc[-1]
-            indicators['sma_200'] = close.rolling(200).mean().iloc[-1] if len(close) >= 200 else indicators['sma_50']
+            # المتوسطات المتحركة الأسية
+            indicators['ema_9'] = self.calculate_ema(closes, 9)
+            indicators['ema_21'] = self.calculate_ema(closes, 21)
+            indicators['ema_50'] = self.calculate_ema(closes, 50)
+            indicators['ema_200'] = self.calculate_ema(closes, 200) if len(closes) >= 200 else indicators['ema_50']
             
             # RSI مع فترات متعددة
-            indicators['rsi_14'] = self.calculate_rsi(close, 14)
-            indicators['rsi_21'] = self.calculate_rsi(close, 21)
+            indicators['rsi_14'] = self.calculate_rsi(closes, 14)
+            indicators['rsi_21'] = self.calculate_rsi(closes, 21)
             
             # MACD
-            macd_data = self.calculate_macd(close)
+            macd_data = self.calculate_macd(closes)
             indicators.update(macd_data)
             
             # نطاقات بولينجر
-            bb_data = self.calculate_bollinger_bands(close, 20, 2)
+            bb_data = self.calculate_bollinger_bands(closes, 20, 2)
             indicators.update(bb_data)
             
             # Stochastic
-            stoch_data = self.calculate_stochastic(high, low, close)
+            stoch_data = self.calculate_stochastic(highs, lows, closes)
             indicators.update(stoch_data)
             
             # ADX (Average Directional Index)
-            adx_data = self.calculate_adx(high, low, close)
+            adx_data = self.calculate_adx(highs, lows, closes)
             indicators.update(adx_data)
             
             # Volume indicators
-            indicators['volume_sma'] = volume.rolling(20).mean().iloc[-1]
-            indicators['volume_ratio'] = volume.iloc[-1] / indicators['volume_sma']
+            indicators['volume_sma'] = self.calculate_sma(volumes, 20)
+            indicators['volume_ratio'] = volumes[-1] / indicators['volume_sma'] if indicators['volume_sma'] > 0 else 1
             
             # Support and Resistance
             support_resistance = self.calculate_support_resistance(data[-50:])
@@ -154,93 +149,210 @@ class AdvancedTechnicalAnalyzer:
             logger.error(f"Error calculating indicators: {e}")
             return {}
 
-    def calculate_rsi(self, prices, period=14):
+    def calculate_sma(self, prices: List[float], period: int) -> float:
+        """حساب المتوسط المتحرك البسيط"""
+        try:
+            if len(prices) < period:
+                return 0
+            return sum(prices[-period:]) / period
+        except:
+            return 0
+
+    def calculate_ema(self, prices: List[float], period: int) -> float:
+        """حساب المتوسط المتحرك الأسي"""
+        try:
+            if len(prices) < period:
+                return self.calculate_sma(prices, len(prices))
+            
+            multiplier = 2 / (period + 1)
+            ema = self.calculate_sma(prices[:period], period)
+            
+            for price in prices[period:]:
+                ema = (price * multiplier) + (ema * (1 - multiplier))
+            
+            return ema
+        except:
+            return 0
+
+    def calculate_rsi(self, prices: List[float], period: int = 14) -> float:
         """حساب RSI محسن"""
         try:
-            delta = prices.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            if len(prices) < period + 1:
+                return 50
+                
+            gains = []
+            losses = []
             
-            rs = gain / loss
+            for i in range(1, len(prices)):
+                change = prices[i] - prices[i-1]
+                if change > 0:
+                    gains.append(change)
+                    losses.append(0)
+                else:
+                    gains.append(0)
+                    losses.append(abs(change))
+            
+            if len(gains) < period:
+                return 50
+            
+            # حساب المتوسطات الأولية
+            avg_gain = sum(gains[:period]) / period
+            avg_loss = sum(losses[:period]) / period
+            
+            # تطبيق صيغة Wilder's smoothing
+            for i in range(period, len(gains)):
+                avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+                avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            
+            if avg_loss == 0:
+                return 100
+                
+            rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
-            return rsi.iloc[-1]
+            return rsi
         except:
             return 50
 
-    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
+    def calculate_macd(self, prices: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Dict:
         """حساب MACD"""
         try:
-            ema_fast = prices.ewm(span=fast).mean()
-            ema_slow = prices.ewm(span=slow).mean()
+            if len(prices) < slow:
+                return {'macd': 0, 'macd_signal': 0, 'macd_histogram': 0}
+            
+            ema_fast = self.calculate_ema(prices, fast)
+            ema_slow = self.calculate_ema(prices, slow)
             
             macd_line = ema_fast - ema_slow
-            signal_line = macd_line.ewm(span=signal).mean()
+            
+            # حساب إشارة MACD (EMA للـ MACD line)
+            macd_values = []
+            for i in range(slow, len(prices)):
+                temp_fast = self.calculate_ema(prices[:i+1], fast)
+                temp_slow = self.calculate_ema(prices[:i+1], slow)
+                macd_values.append(temp_fast - temp_slow)
+            
+            signal_line = self.calculate_ema(macd_values, signal) if len(macd_values) >= signal else macd_line
             histogram = macd_line - signal_line
             
             return {
-                'macd': macd_line.iloc[-1],
-                'macd_signal': signal_line.iloc[-1],
-                'macd_histogram': histogram.iloc[-1]
+                'macd': macd_line,
+                'macd_signal': signal_line,
+                'macd_histogram': histogram
             }
         except:
             return {'macd': 0, 'macd_signal': 0, 'macd_histogram': 0}
 
-    def calculate_bollinger_bands(self, prices, period=20, std_dev=2):
+    def calculate_bollinger_bands(self, prices: List[float], period: int = 20, std_dev: float = 2) -> Dict:
         """حساب نطاقات بولينجر"""
         try:
-            sma = prices.rolling(period).mean()
-            std = prices.rolling(period).std()
+            if len(prices) < period:
+                current_price = prices[-1] if prices else 0
+                return {
+                    'bb_upper': current_price * 1.02,
+                    'bb_middle': current_price,
+                    'bb_lower': current_price * 0.98,
+                    'bb_width': current_price * 0.04
+                }
+            
+            sma = self.calculate_sma(prices, period)
+            
+            # حساب الانحراف المعياري
+            recent_prices = prices[-period:]
+            variance = sum((price - sma) ** 2 for price in recent_prices) / period
+            std = math.sqrt(variance)
             
             return {
-                'bb_upper': (sma + (std * std_dev)).iloc[-1],
-                'bb_middle': sma.iloc[-1],
-                'bb_lower': (sma - (std * std_dev)).iloc[-1],
-                'bb_width': ((sma + (std * std_dev)) - (sma - (std * std_dev))).iloc[-1]
+                'bb_upper': sma + (std * std_dev),
+                'bb_middle': sma,
+                'bb_lower': sma - (std * std_dev),
+                'bb_width': std * std_dev * 2
             }
         except:
-            return {'bb_upper': 0, 'bb_middle': 0, 'bb_lower': 0, 'bb_width': 0}
+            current_price = prices[-1] if prices else 0
+            return {
+                'bb_upper': current_price * 1.02,
+                'bb_middle': current_price,
+                'bb_lower': current_price * 0.98,
+                'bb_width': current_price * 0.04
+            }
 
-    def calculate_stochastic(self, high, low, close, k_period=14, d_period=3):
+    def calculate_stochastic(self, highs: List[float], lows: List[float], closes: List[float], k_period: int = 14, d_period: int = 3) -> Dict:
         """حساب Stochastic Oscillator"""
         try:
-            lowest_low = low.rolling(k_period).min()
-            highest_high = high.rolling(k_period).max()
+            if len(closes) < k_period:
+                return {'stoch_k': 50, 'stoch_d': 50}
             
-            k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
-            d_percent = k_percent.rolling(d_period).mean()
+            k_values = []
+            
+            for i in range(k_period - 1, len(closes)):
+                period_high = max(highs[i - k_period + 1:i + 1])
+                period_low = min(lows[i - k_period + 1:i + 1])
+                
+                if period_high == period_low:
+                    k_percent = 50
+                else:
+                    k_percent = ((closes[i] - period_low) / (period_high - period_low)) * 100
+                
+                k_values.append(k_percent)
+            
+            k_current = k_values[-1] if k_values else 50
+            d_current = self.calculate_sma(k_values, min(d_period, len(k_values))) if k_values else 50
             
             return {
-                'stoch_k': k_percent.iloc[-1],
-                'stoch_d': d_percent.iloc[-1]
+                'stoch_k': k_current,
+                'stoch_d': d_current
             }
         except:
             return {'stoch_k': 50, 'stoch_d': 50}
 
-    def calculate_adx(self, high, low, close, period=14):
-        """حساب ADX"""
+    def calculate_adx(self, highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> Dict:
+        """حساب ADX مبسط"""
         try:
-            plus_dm = high.diff()
-            minus_dm = low.diff()
+            if len(closes) < period + 1:
+                return {'adx': 25, 'plus_di': 25, 'minus_di': 25}
             
-            plus_dm[plus_dm < 0] = 0
-            minus_dm[minus_dm > 0] = 0
-            minus_dm = abs(minus_dm)
+            # حساب True Range و Directional Movement
+            true_ranges = []
+            plus_dms = []
+            minus_dms = []
             
-            tr1 = high - low
-            tr2 = abs(high - close.shift())
-            tr3 = abs(low - close.shift())
-            true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            for i in range(1, len(closes)):
+                # True Range
+                tr1 = highs[i] - lows[i]
+                tr2 = abs(highs[i] - closes[i-1])
+                tr3 = abs(lows[i] - closes[i-1])
+                true_range = max(tr1, tr2, tr3)
+                true_ranges.append(true_range)
+                
+                # Directional Movement
+                plus_dm = max(highs[i] - highs[i-1], 0) if highs[i] - highs[i-1] > lows[i-1] - lows[i] else 0
+                minus_dm = max(lows[i-1] - lows[i], 0) if lows[i-1] - lows[i] > highs[i] - highs[i-1] else 0
+                
+                plus_dms.append(plus_dm)
+                minus_dms.append(minus_dm)
             
-            plus_di = 100 * (plus_dm.ewm(alpha=1/period).mean() / true_range.ewm(alpha=1/period).mean())
-            minus_di = 100 * (minus_dm.ewm(alpha=1/period).mean() / true_range.ewm(alpha=1/period).mean())
+            if len(true_ranges) < period:
+                return {'adx': 25, 'plus_di': 25, 'minus_di': 25}
             
-            dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-            adx = dx.ewm(alpha=1/period).mean()
+            # حساب المتوسطات
+            avg_tr = self.calculate_sma(true_ranges[-period:], period)
+            avg_plus_dm = self.calculate_sma(plus_dms[-period:], period)
+            avg_minus_dm = self.calculate_sma(minus_dms[-period:], period)
+            
+            # حساب DI
+            plus_di = (avg_plus_dm / avg_tr * 100) if avg_tr > 0 else 0
+            minus_di = (avg_minus_dm / avg_tr * 100) if avg_tr > 0 else 0
+            
+            # حساب ADX
+            dx = abs(plus_di - minus_di) / (plus_di + minus_di) * 100 if (plus_di + minus_di) > 0 else 0
+            
+            # تقدير ADX كمتوسط للـ DX (مبسط)
+            adx = dx
             
             return {
-                'adx': adx.iloc[-1],
-                'plus_di': plus_di.iloc[-1],
-                'minus_di': minus_di.iloc[-1]
+                'adx': adx,
+                'plus_di': plus_di,
+                'minus_di': minus_di
             }
         except:
             return {'adx': 25, 'plus_di': 25, 'minus_di': 25}
