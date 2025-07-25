@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-import aiohttp
+import requests
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
@@ -20,7 +20,7 @@ class TechnicalAnalyzer:
     def __init__(self):
         self.timeframes = ['1h', '4h', '1d']
         
-    async def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> Optional[List]:
+    def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> Optional[List]:
         """جلب بيانات الأسعار من Binance API"""
         try:
             url = f"https://api.binance.com/api/v3/klines"
@@ -30,30 +30,31 @@ class TechnicalAnalyzer:
                 'limit': limit
             }
             
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, params=params) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if not data:
-                            return None
-                            
-                        # تحويل البيانات للنوع المناسب
-                        processed_data = []
-                        for row in data:
-                            processed_data.append({
-                                'timestamp': int(row[0]),
-                                'open': float(row[1]),
-                                'high': float(row[2]),
-                                'low': float(row[3]),
-                                'close': float(row[4]),
-                                'volume': float(row[5])
-                            })
-                        
-                        return processed_data
-                    else:
-                        logger.error(f"API Error: {response.status}")
-                        return None
+            # استخدام requests بدلاً من aiohttp لتجنب مشاكل event loop
+            response = requests.get(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if not data:
+                    return None
+                    
+                # تحويل البيانات للنوع المناسب
+                processed_data = []
+                for row in data:
+                    processed_data.append({
+                        'timestamp': int(row[0]),
+                        'open': float(row[1]),
+                        'high': float(row[2]),
+                        'low': float(row[3]),
+                        'close': float(row[4]),
+                        'volume': float(row[5])
+                    })
+                
+                return processed_data
+            else:
+                logger.error(f"API Error: {response.status_code}")
+                return None
+                
         except Exception as e:
             logger.error(f"Error fetching price data: {e}")
             return None
@@ -201,13 +202,13 @@ class TechnicalAnalyzer:
             logger.error(f"Error in trend analysis: {e}")
             return "غير محدد", 0
 
-    async def comprehensive_analysis(self, symbol: str) -> Dict:
+    def comprehensive_analysis(self, symbol: str) -> Dict:
         """تحليل شامل للعملة"""
         analysis_results = {}
         
         for timeframe in self.timeframes:
             try:
-                data = await self.get_price_data(symbol, timeframe)
+                data = self.get_price_data(symbol, timeframe)
                 if data and len(data) > 50:
                     indicators = self.calculate_technical_indicators(data)
                     if indicators:
@@ -248,8 +249,6 @@ class TechnicalAnalyzer:
                             'price': current_price,
                             'volume': indicators.get('volume', 0)
                         }
-                        
-                await asyncio.sleep(0.1)  # تجنب الضغط على API
                         
             except Exception as e:
                 logger.error(f"Error analyzing {symbol} {timeframe}: {e}")
@@ -315,15 +314,22 @@ class CryptoTelegramBot:
             # إرسال رسالة انتظار
             waiting_msg = await update.message.reply_text(f"🔍 جاري تحليل {symbol}...\nيرجى الانتظار...")
             
-            # إجراء التحليل الشامل
-            analysis = await self.analyzer.comprehensive_analysis(symbol)
+            # إجراء التحليل الشامل (في thread منفصل لتجنب blocking)
+            def run_analysis():
+                return self.analyzer.comprehensive_analysis(symbol)
+            
+            # تشغيل في thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_analysis)
+                analysis = future.result(timeout=30)  # timeout 30 seconds
             
             if not analysis:
                 await waiting_msg.edit_text(f"❌ لم أتمكن من العثور على بيانات لـ {symbol}\nتأكد من صحة رمز العملة")
                 return
                 
             # تنسيق التقرير
-            report = await self.format_analysis_report(symbol, analysis)
+            report = self.format_analysis_report(symbol, analysis)
             
             # إنشاء لوحة الأزرار
             keyboard = [
@@ -341,7 +347,7 @@ class CryptoTelegramBot:
             except:
                 await update.message.reply_text(f"❌ حدث خطأ أثناء تحليل {symbol}")
 
-    async def format_analysis_report(self, symbol: str, analysis: Dict) -> str:
+    def format_analysis_report(self, symbol: str, analysis: Dict) -> str:
         """تنسيق تقرير التحليل"""
         try:
             if not analysis:
@@ -521,7 +527,7 @@ class CryptoTelegramBot:
                 return
                 
             # التحقق من صحة العملة
-            test_data = await self.analyzer.get_price_data(symbol)
+            test_data = self.analyzer.get_price_data(symbol)
             if test_data is None:
                 await update.message.reply_text(f"❌ لم أتمكن من العثور على {symbol}")
                 return
