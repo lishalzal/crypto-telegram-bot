@@ -8,6 +8,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from typing import Dict, List, Optional, Tuple
 from flask import Flask, request
 import threading
+import json
 
 # إعداد الـ logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -644,6 +645,21 @@ class CryptoTelegramBot:
         """معالج الأخطاء العام"""
         logger.error(f"Exception while handling an update: {context.error}")
 
+    def process_update_sync(self, update_json):
+        """معالجة التحديث بشكل متزامن"""
+        try:
+            update = Update.de_json(update_json, self.application.bot)
+            if update:
+                # تشغيل في loop جديد
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(self.application.process_update(update))
+                finally:
+                    loop.close()
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+
     def run(self):
         """تشغيل البوت"""
         try:
@@ -663,7 +679,8 @@ class CryptoTelegramBot:
             # إضافة معالج الأخطاء
             self.application.add_error_handler(self.error_handler)
             
-            if self.webhook_url:
+            # تحديد وضع التشغيل
+            if self.webhook_url and self.webhook_url.strip():
                 # وضع الـ webhook للنشر على Render
                 self.run_webhook()
             else:
@@ -692,68 +709,64 @@ class CryptoTelegramBot:
             def webhook():
                 try:
                     # الحصول على البيانات
-                    json_data = request.get_json()
-                    logger.info(f"Received webhook data: {json_data}")
+                    json_data = request.get_json(force=True)
+                    logger.info(f"📩 Received webhook data")
                     
-                    if not json_data:
-                        logger.error("No JSON data received")
-                        return "No data", 400
+                    if json_data:
+                        # معالجة في thread منفصل
+                        thread = threading.Thread(
+                            target=self.process_update_sync,
+                            args=(json_data,)
+                        )
+                        thread.daemon = True
+                        thread.start()
+                        return "OK", 200
                     
-                    # إنشاء Update object
-                    update = Update.de_json(json_data, self.application.bot)
-                    if not update:
-                        logger.error("Failed to create Update object")
-                        return "Invalid update", 400
-                    
-                    # معالجة التحديث بشكل متزامن
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(self.application.process_update(update))
-                    finally:
-                        loop.close()
-                    
-                    return "OK", 200
+                    return "No data", 400
                     
                 except Exception as e:
-                    logger.error(f"Webhook error: {e}")
+                    logger.error(f"❌ Webhook error: {e}")
                     return "Error", 500
 
             # إعداد الـ webhook
             async def setup_webhook():
-                await self.application.initialize()
-                await self.application.start()
-                
-                webhook_endpoint = f"{self.webhook_url}/webhook"
-                
-                # حذف webhook القديم أولاً
-                await self.application.bot.delete_webhook()
-                await asyncio.sleep(1)
-                
-                # إعداد webhook جديد
-                webhook_set = await self.application.bot.set_webhook(
-                    url=webhook_endpoint,
-                    allowed_updates=["message", "callback_query"]
-                )
-                
-                if webhook_set:
-                    logger.info(f"✅ Webhook set successfully to: {webhook_endpoint}")
-                else:
-                    logger.error("❌ Failed to set webhook")
-                
-                # التحقق من إعدادات webhook
-                webhook_info = await self.application.bot.get_webhook_info()
-                logger.info(f"Webhook info: {webhook_info}")
-                
-                # إرسال تنبيه للإدمن
-                if self.admin_id:
-                    try:
-                        await self.application.bot.send_message(
-                            chat_id=self.admin_id,
-                            text=f"🚀 تم تشغيل البوت بنجاح على Render!\n⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n🌐 Webhook: {webhook_endpoint}"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending startup message: {e}")
+                try:
+                    await self.application.initialize()
+                    
+                    webhook_endpoint = f"{self.webhook_url}/webhook"
+                    
+                    # حذف webhook القديم أولاً
+                    await self.application.bot.delete_webhook()
+                    await asyncio.sleep(1)
+                    
+                    # إعداد webhook جديد
+                    webhook_set = await self.application.bot.set_webhook(
+                        url=webhook_endpoint,
+                        allowed_updates=["message", "callback_query"],
+                        drop_pending_updates=True
+                    )
+                    
+                    if webhook_set:
+                        logger.info(f"✅ Webhook set successfully to: {webhook_endpoint}")
+                    else:
+                        logger.error("❌ Failed to set webhook")
+                    
+                    # التحقق من إعدادات webhook
+                    webhook_info = await self.application.bot.get_webhook_info()
+                    logger.info(f"Webhook info: URL={webhook_info.url}, Pending={webhook_info.pending_update_count}")
+                    
+                    # إرسال تنبيه للإدمن
+                    if self.admin_id:
+                        try:
+                            await self.application.bot.send_message(
+                                chat_id=self.admin_id,
+                                text=f"🚀 تم تشغيل البوت بنجاح!\n⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n🌐 Webhook: {webhook_endpoint}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending startup message: {e}")
+                            
+                except Exception as e:
+                    logger.error(f"Error setting up webhook: {e}")
             
             # تشغيل الإعداد
             loop = asyncio.new_event_loop()
