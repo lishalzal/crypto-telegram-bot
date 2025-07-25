@@ -2,8 +2,7 @@ import os
 import asyncio
 import logging
 import aiohttp
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from typing import Dict, List, Optional, Tuple
@@ -65,20 +64,6 @@ class TechnicalAnalyzer:
         prices = [item['close'] for item in data[-period:]]
         return sum(prices) / len(prices)
 
-    def calculate_ema(self, data: List[Dict], period: int) -> float:
-        """حساب المتوسط المتحرك الأسي"""
-        if len(data) < period:
-            return 0
-            
-        prices = [item['close'] for item in data]
-        multiplier = 2 / (period + 1)
-        ema = prices[0]
-        
-        for price in prices[1:]:
-            ema = (price * multiplier) + (ema * (1 - multiplier))
-            
-        return ema
-
     def calculate_rsi(self, data: List[Dict], period: int = 14) -> float:
         """حساب مؤشر القوة النسبية"""
         if len(data) < period + 1:
@@ -109,48 +94,6 @@ class TechnicalAnalyzer:
         rsi = 100 - (100 / (1 + rs))
         return rsi
 
-    def calculate_macd(self, data: List[Dict]) -> Dict:
-        """حساب MACD"""
-        if len(data) < 26:
-            return {'macd': 0, 'signal': 0, 'histogram': 0}
-            
-        ema_12 = self.calculate_ema(data, 12)
-        ema_26 = self.calculate_ema(data, 26)
-        macd_line = ema_12 - ema_26
-        
-        # Signal line (EMA of MACD)
-        signal_line = macd_line  # مبسط
-        histogram = macd_line - signal_line
-        
-        return {
-            'macd': macd_line,
-            'signal': signal_line,
-            'histogram': histogram
-        }
-
-    def calculate_bollinger_bands(self, data: List[Dict], period: int = 20) -> Dict:
-        """حساب نطاقات بولينجر"""
-        if len(data) < period:
-            current_price = data[-1]['close'] if data else 0
-            return {
-                'upper': current_price * 1.02,
-                'middle': current_price,
-                'lower': current_price * 0.98
-            }
-            
-        sma = self.calculate_sma(data, period)
-        prices = [item['close'] for item in data[-period:]]
-        
-        # حساب الانحراف المعياري
-        variance = sum((price - sma) ** 2 for price in prices) / period
-        std_dev = variance ** 0.5
-        
-        return {
-            'upper': sma + (2 * std_dev),
-            'middle': sma,
-            'lower': sma - (2 * std_dev)
-        }
-
     def calculate_technical_indicators(self, data: List[Dict]) -> Dict:
         """حساب المؤشرات الفنية"""
         try:
@@ -162,46 +105,34 @@ class TechnicalAnalyzer:
             # المتوسطات المتحركة
             sma_20 = self.calculate_sma(data, 20)
             sma_50 = self.calculate_sma(data, 50) if len(data) >= 50 else sma_20
-            ema_12 = self.calculate_ema(data, 12)
-            ema_26 = self.calculate_ema(data, 26)
             
             # RSI
             rsi = self.calculate_rsi(data)
-            
-            # MACD
-            macd_data = self.calculate_macd(data)
-            
-            # نطاقات بولينجر
-            bb_data = self.calculate_bollinger_bands(data)
             
             # الدعم والمقاومة
             recent_data = data[-20:]
             support = min(item['low'] for item in recent_data)
             resistance = max(item['high'] for item in recent_data)
             
-            # Stochastic مبسط
-            high_14 = max(item['high'] for item in data[-14:])
-            low_14 = min(item['low'] for item in data[-14:])
-            stoch_k = ((current['close'] - low_14) / (high_14 - low_14)) * 100 if high_14 != low_14 else 50
+            # نطاقات بولينجر المبسطة
+            prices = [item['close'] for item in data[-20:]]
+            variance = sum((price - sma_20) ** 2 for price in prices) / 20
+            std_dev = variance ** 0.5
+            
+            bb_upper = sma_20 + (2 * std_dev)
+            bb_lower = sma_20 - (2 * std_dev)
             
             return {
                 'close': current['close'],
                 'volume': current['volume'],
                 'sma_20': sma_20,
                 'sma_50': sma_50,
-                'ema_12': ema_12,
-                'ema_26': ema_26,
                 'rsi': rsi,
-                'macd': macd_data['macd'],
-                'macd_signal': macd_data['signal'],
-                'macd_histogram': macd_data['histogram'],
-                'bb_upper': bb_data['upper'],
-                'bb_middle': bb_data['middle'],
-                'bb_lower': bb_data['lower'],
                 'support': support,
                 'resistance': resistance,
-                'stoch_k': stoch_k,
-                'stoch_d': stoch_k  # مبسط
+                'bb_upper': bb_upper,
+                'bb_lower': bb_lower,
+                'bb_middle': sma_20
             }
             
         except Exception as e:
@@ -232,15 +163,6 @@ class TechnicalAnalyzer:
                     signals.append(1)
                 else:
                     signals.append(-1)
-                    
-            # تحليل MACD
-            macd = indicators.get('macd', 0)
-            macd_signal = indicators.get('macd_signal', 0)
-            
-            if macd > macd_signal:
-                signals.append(1)
-            else:
-                signals.append(-1)
                     
             # تحليل RSI
             rsi = indicators.get('rsi', 50)
@@ -278,73 +200,6 @@ class TechnicalAnalyzer:
             logger.error(f"Error in trend analysis: {e}")
             return "غير محدد", 0
 
-    def get_entry_exit_points(self, data: List[Dict], indicators: Dict) -> Dict:
-        """تحديد نقاط الدخول والخروج"""
-        try:
-            current_price = indicators.get('close', 0)
-            if not current_price:
-                return {}
-            
-            # نقاط الدعم والمقاومة
-            support_levels = []
-            resistance_levels = []
-            
-            if len(data) >= 20:
-                recent_data = data[-20:]
-                lows = [item['low'] for item in recent_data]
-                highs = [item['high'] for item in recent_data]
-                
-                support_levels = sorted(set([x for x in lows if x > 0]), reverse=True)[:3]
-                resistance_levels = sorted(set([x for x in highs if x > 0]))[-3:]
-            
-            # نقاط الدخول
-            bb_lower = indicators.get('bb_lower', current_price * 0.95)
-            bb_upper = indicators.get('bb_upper', current_price * 1.05)
-            support = indicators.get('support', current_price * 0.95)
-            resistance = indicators.get('resistance', current_price * 1.05)
-            
-            entry_points = {
-                'buy_zones': [
-                    bb_lower,
-                    support,
-                    current_price * 0.95
-                ],
-                'sell_zones': [
-                    bb_upper,
-                    resistance,
-                    current_price * 1.05
-                ]
-            }
-            
-            # نقاط وقف الخسارة والأهداف
-            stop_loss_buy = min(support_levels) if support_levels else current_price * 0.92
-            stop_loss_sell = max(resistance_levels) if resistance_levels else current_price * 1.08
-            
-            targets = {
-                'buy_targets': [
-                    current_price * 1.03,
-                    current_price * 1.07,
-                    current_price * 1.15
-                ],
-                'sell_targets': [
-                    current_price * 0.97,
-                    current_price * 0.93,
-                    current_price * 0.85
-                ]
-            }
-            
-            return {
-                'entry_points': entry_points,
-                'stop_loss': {'buy': stop_loss_buy, 'sell': stop_loss_sell},
-                'targets': targets,
-                'support_levels': support_levels,
-                'resistance_levels': resistance_levels
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in entry/exit points: {e}")
-            return {}
-
     async def comprehensive_analysis(self, symbol: str) -> Dict:
         """تحليل شامل للعملة"""
         analysis_results = {}
@@ -356,14 +211,40 @@ class TechnicalAnalyzer:
                     indicators = self.calculate_technical_indicators(data)
                     if indicators:
                         trend, strength = self.analyze_trend(indicators)
-                        entry_exit = self.get_entry_exit_points(data, indicators)
+                        
+                        current_price = indicators.get('close', 0)
+                        support = indicators.get('support', current_price * 0.95)
+                        resistance = indicators.get('resistance', current_price * 1.05)
+                        
+                        entry_exit = {
+                            'entry_points': {
+                                'buy_zones': [support, current_price * 0.98],
+                                'sell_zones': [resistance, current_price * 1.02]
+                            },
+                            'stop_loss': {
+                                'buy': current_price * 0.92,
+                                'sell': current_price * 1.08
+                            },
+                            'targets': {
+                                'buy_targets': [
+                                    current_price * 1.03,
+                                    current_price * 1.07,
+                                    current_price * 1.15
+                                ],
+                                'sell_targets': [
+                                    current_price * 0.97,
+                                    current_price * 0.93,
+                                    current_price * 0.85
+                                ]
+                            }
+                        }
                         
                         analysis_results[timeframe] = {
                             'trend': trend,
                             'strength': strength,
                             'indicators': indicators,
                             'entry_exit': entry_exit,
-                            'price': indicators.get('close', 0),
+                            'price': current_price,
                             'volume': indicators.get('volume', 0)
                         }
                         
@@ -525,9 +406,10 @@ class CryptoTelegramBot:
 📈 *المؤشرات الفنية:*
 
 🔸 *RSI:* {indicators.get('rsi', 0):.1f}
-🔸 *MACD:* {'إيجابي' if indicators.get('macd', 0) > indicators.get('macd_signal', 0) else 'سلبي'}
 🔸 *MA20:* ${indicators.get('sma_20', 0):.6f}
 🔸 *MA50:* ${indicators.get('sma_50', 0):.6f}
+🔸 *الدعم:* ${indicators.get('support', 0):.6f}
+🔸 *المقاومة:* ${indicators.get('resistance', 0):.6f}
 
 ━━━━━━━━━━━━━━━━━━━━
 🎯 *نقاط التداول:*
@@ -726,9 +608,8 @@ class CryptoTelegramBot:
 
 📊 *معلومات التحليل:*
 • RSI: مؤشر القوة النسبية (30-70 طبيعي)
-• MACD: تقارب وتباعد المتوسطات
 • MA: المتوسطات المتحركة (20, 50)
-• BB: نطاقات بولينجر
+• الدعم والمقاومة
 
 🎯 *رموز التوصيات:*
 🟢 شراء قوي | 🔵 شراء
@@ -763,8 +644,8 @@ class CryptoTelegramBot:
         """معالج الأخطاء العام"""
         logger.error(f"Exception while handling an update: {context.error}")
 
-    async def setup_application(self):
-        """إعداد التطبيق"""
+    def run(self):
+        """تشغيل البوت"""
         try:
             # إنشاء التطبيق
             self.application = Application.builder().token(self.token).build()
@@ -782,14 +663,15 @@ class CryptoTelegramBot:
             # إضافة معالج الأخطاء
             self.application.add_error_handler(self.error_handler)
             
-            # تهيئة التطبيق
-            await self.application.initialize()
-            await self.application.start()
-            
-            return self.application
-            
+            if self.webhook_url:
+                # وضع الـ webhook للنشر على Render
+                self.run_webhook()
+            else:
+                # وضع الـ polling للتطوير المحلي
+                self.run_polling()
+                
         except Exception as e:
-            logger.error(f"Error setting up application: {e}")
+            logger.error(f"Error starting bot: {e}")
             raise
 
     def run_webhook(self):
@@ -809,22 +691,27 @@ class CryptoTelegramBot:
             @app.route('/webhook', methods=['POST'])
             def webhook():
                 try:
-                    if not self.application:
-                        logger.error("Application not initialized")
-                        return "Application not ready", 500
-                        
                     # الحصول على البيانات
                     json_data = request.get_json()
+                    logger.info(f"Received webhook data: {json_data}")
+                    
                     if not json_data:
+                        logger.error("No JSON data received")
                         return "No data", 400
                     
                     # إنشاء Update object
                     update = Update.de_json(json_data, self.application.bot)
                     if not update:
+                        logger.error("Failed to create Update object")
                         return "Invalid update", 400
                     
-                    # معالجة التحديث
-                    asyncio.create_task(self.application.process_update(update))
+                    # معالجة التحديث بشكل متزامن
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(self.application.process_update(update))
+                    finally:
+                        loop.close()
                     
                     return "OK", 200
                     
@@ -832,22 +719,38 @@ class CryptoTelegramBot:
                     logger.error(f"Webhook error: {e}")
                     return "Error", 500
 
-            # إعداد التطبيق بشكل متزامن
-            async def setup():
-                await self.setup_application()
+            # إعداد الـ webhook
+            async def setup_webhook():
+                await self.application.initialize()
+                await self.application.start()
                 
-                # إعداد الـ webhook
-                if self.webhook_url:
-                    webhook_endpoint = f"{self.webhook_url}/webhook"
-                    await self.application.bot.set_webhook(webhook_endpoint)
-                    logger.info(f"Webhook set to: {webhook_endpoint}")
+                webhook_endpoint = f"{self.webhook_url}/webhook"
+                
+                # حذف webhook القديم أولاً
+                await self.application.bot.delete_webhook()
+                await asyncio.sleep(1)
+                
+                # إعداد webhook جديد
+                webhook_set = await self.application.bot.set_webhook(
+                    url=webhook_endpoint,
+                    allowed_updates=["message", "callback_query"]
+                )
+                
+                if webhook_set:
+                    logger.info(f"✅ Webhook set successfully to: {webhook_endpoint}")
+                else:
+                    logger.error("❌ Failed to set webhook")
+                
+                # التحقق من إعدادات webhook
+                webhook_info = await self.application.bot.get_webhook_info()
+                logger.info(f"Webhook info: {webhook_info}")
                 
                 # إرسال تنبيه للإدمن
                 if self.admin_id:
                     try:
                         await self.application.bot.send_message(
                             chat_id=self.admin_id,
-                            text="🚀 تم تشغيل البوت بنجاح على Render!\n⏰ الوقت: " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            text=f"🚀 تم تشغيل البوت بنجاح على Render!\n⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n🌐 Webhook: {webhook_endpoint}"
                         )
                     except Exception as e:
                         logger.error(f"Error sending startup message: {e}")
@@ -855,7 +758,7 @@ class CryptoTelegramBot:
             # تشغيل الإعداد
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(setup())
+            loop.run_until_complete(setup_webhook())
             
             # تشغيل Flask
             port = int(os.environ.get('PORT', 10000))
@@ -870,7 +773,7 @@ class CryptoTelegramBot:
         """تشغيل البوت في وضع الـ polling"""
         try:
             async def main():
-                await self.setup_application()
+                await self.application.initialize()
                 
                 # إرسال تنبيه للإدمن
                 if self.admin_id:
@@ -892,21 +795,6 @@ class CryptoTelegramBot:
             
         except Exception as e:
             logger.error(f"Error in polling mode: {e}")
-            raise
-
-    def run(self):
-        """تشغيل البوت"""
-        try:
-            # تحديد وضع التشغيل
-            if self.webhook_url:
-                # وضع الـ webhook للنشر على Render
-                self.run_webhook()
-            else:
-                # وضع الـ polling للتطوير المحلي
-                self.run_polling()
-                
-        except Exception as e:
-            logger.error(f"Error starting bot: {e}")
             raise
 
 # التشغيل الرئيسي
