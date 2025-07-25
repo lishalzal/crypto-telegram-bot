@@ -1427,42 +1427,503 @@ class ProfessionalCryptoBot:
             return f"❌ خطأ في تنسيق التقرير لـ {symbol}"
 
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """معالج الأزرار المحسن"""
+        """معالج الأزرار المحسن مع جميع الوظائف"""
         try:
             query = update.callback_query
             await query.answer()
             
             data = query.data
+            user_id = update.effective_user.id
             
+            # التحليل الاحترافي
             if data.startswith("pro_"):
-                symbol = data.split("_")[1]
+                symbol = data.split("_", 1)[1]
                 context.args = [symbol]
+                # تحديث الرسالة لإظهار التحليل قيد التقدم
+                await query.edit_message_text(
+                    f"🔍 جاري التحليل الاحترافي لـ {symbol}...\nيرجى الانتظار...",
+                    parse_mode='Markdown'
+                )
+                # تشغيل التحليل
+                update.message = query.message  # محاكاة message للـ command handler
                 await self.pro_analysis_command(update, context)
                 
+            # تحديث التحليل الاحترافي
             elif data.startswith("refresh_pro_"):
-                symbol = data.split("_")[2]
+                symbol = data.split("_", 2)[2]
                 context.args = [symbol]
+                await query.edit_message_text(
+                    f"🔄 تحديث التحليل الاحترافي لـ {symbol}...",
+                    parse_mode='Markdown'
+                )
+                update.message = query.message
                 await self.pro_analysis_command(update, context)
                 
+            # التحليل السريع
             elif data.startswith("refresh_quick_"):
-                symbol = data.split("_")[2]
+                symbol = data.split("_", 2)[2]
                 context.args = [symbol]
+                await query.edit_message_text(f"⚡ تحديث التحليل السريع لـ {symbol}...")
+                update.message = query.message
                 await self.quick_analysis_command(update, context)
                 
+            # تفاصيل المؤشرات
+            elif data.startswith("details_"):
+                symbol = data.split("_", 1)[1]
+                await self.show_indicators_details(query, symbol)
+                
+            # إشارات التداول
+            elif data.startswith("signals_"):
+                symbol = data.split("_", 1)[1]
+                await self.show_trading_signals_details(query, symbol)
+                
+            # مقارنة الفريمات
+            elif data.startswith("timeframes_"):
+                symbol = data.split("_", 1)[1]
+                await self.show_timeframes_comparison(query, symbol)
+                
+            # إضافة تنبيه
+            elif data.startswith("alert_"):
+                symbol = data.split("_", 1)[1]
+                await self.setup_price_alert(query, symbol, user_id)
+                
+            # القائمة الرئيسية
             elif data == "pro_analysis":
                 await query.edit_message_text(
-                    "📊 *التحليل الاحترافي*\n\nأرسل رمز العملة للتحليل الشامل:\n\nمثال: BTC أو ETH أو ADA",
+                    "📊 *التحليل الاحترافي*\n\n"
+                    "أرسل رمز العملة للحصول على تحليل شامل:\n\n"
+                    "🔹 مثال: `BTC` أو `ETH` أو `ADA`\n"
+                    "🔹 أو استخدم: `/pro BTC`\n\n"
+                    "📈 *يشمل:*\n"
+                    "• 5 إطارات زمنية\n"
+                    "• 15+ مؤشر فني\n"
+                    "• إشارات دخول وخروج\n"
+                    "• حساب المخاطرة والعائد",
                     parse_mode='Markdown'
                 )
                 
             elif data == "quick_analysis":
                 await query.edit_message_text(
-                    "⚡ *التحليل السريع*\n\nأرسل رمز العملة للتحليل السريع:\n\nمثال: BTC أو ETH أو ADA",
+                    "⚡ *التحليل السريع*\n\n"
+                    "أرسل رمز العملة للحصول على تحليل سريع:\n\n"
+                    "🔹 مثال: `BTC` أو `ETH` أو `ADA`\n"
+                    "🔹 أو استخدم: `/quick BTC`\n\n"
+                    "📊 *يشمل:*\n"
+                    "• تحليل الإطار الساعي\n"
+                    "• المؤشرات الرئيسية\n"
+                    "• التوصية السريعة",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "compare_coins":
+                await query.edit_message_text(
+                    "📈 *مقارنة العملات*\n\n"
+                    "قريباً: مقارنة شاملة بين عملتين\n\n"
+                    "📊 *ستشمل:*\n"
+                    "• مقارنة الأداء\n"
+                    "• مقارنة المؤشرات\n"
+                    "• التوصيات النسبية\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "setup_alerts":
+                await query.edit_message_text(
+                    "🔔 *إعداد التنبيهات*\n\n"
+                    "قريباً: تنبيهات ذكية للأسعار والإشارات\n\n"
+                    "📱 *ستشمل:*\n"
+                    "• تنبيهات الأسعار\n"
+                    "• تنبيهات المؤشرات\n"
+                    "• تنبيهات الإشارات\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "user_settings":
+                await query.edit_message_text(
+                    "⚙️ *الإعدادات الشخصية*\n\n"
+                    "قريباً: إعدادات مخصصة للمستخدم\n\n"
+                    "🎛️ *ستشمل:*\n"
+                    "• تفضيلات العرض\n"
+                    "• إعدادات التنبيهات\n"
+                    "• المؤشرات المفضلة\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "help":
+                await self.help_command(update, context)
+                
+            # الرجوع للقائمة الرئيسية
+            elif data == "back_to_main":
+                update.message = query.message
+                await self.start_command(update, context)
+                
+            # مقارنة العملات
+            elif data.startswith("compare_"):
+                parts = data.split("_")
+                if len(parts) >= 3:
+                    symbol1, symbol2 = parts[1], parts[2]
+                    context.args = [symbol1, symbol2]
+                    update.message = query.message
+                    await self.compare_command(update, context)
+                    
+            # إعدادات مختلفة
+            elif data == "display_settings":
+                await query.edit_message_text(
+                    "🎨 *تفضيلات العرض*\n\n"
+                    "قريباً: تخصيص طريقة عرض التحاليل\n\n"
+                    "📱 *سيشمل:*\n"
+                    "• اختيار الألوان\n"
+                    "• حجم الخط\n"
+                    "• نوع الرسوم البيانية\n"
+                    "• ترتيب المعلومات\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "alert_settings":
+                await query.edit_message_text(
+                    "🔔 *إعدادات التنبيهات*\n\n"
+                    "قريباً: تخصيص التنبيهات الذكية\n\n"
+                    "📱 *سيشمل:*\n"
+                    "• أوقات التنبيهات\n"
+                    "• أنواع التنبيهات\n"
+                    "• مستويات الأهمية\n"
+                    "• طرق الإشعار\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "indicator_settings":
+                await query.edit_message_text(
+                    "📊 *المؤشرات المفضلة*\n\n"
+                    "قريباً: تخصيص المؤشرات المعروضة\n\n"
+                    "📈 *سيشمل:*\n"
+                    "• اختيار المؤشرات\n"
+                    "• فترات المؤشرات\n"
+                    "• حساسية الإشارات\n"
+                    "• ترتيب الأولوية\n\n"
+                    "⏳ قيد التطوير...",
+                    parse_mode='Markdown'
+                )
+                
+            elif data == "locale_settings":
+                await query.edit_message_text(
+                    "🌐 *اللغة والوقت*\n\n"
+                    "قريباً: تخصيص اللغة والمنطقة الزمنية\n\n"
+                    "🌍 *سيشمل:*\n"
+                    "• اختيار اللغة\n"
+                    "• المنطقة الزمنية\n"
+                    "• تنسيق التاريخ\n"
+                    "• عملة العرض\n\n"
+                    "⏳ قيد التطوير...",
                     parse_mode='Markdown'
                 )
                 
         except Exception as e:
             logger.error(f"Error in button callback: {e}")
+            try:
+                await query.edit_message_text(
+                    "❌ حدث خطأ في معالجة الطلب\n"
+                    "يرجى المحاولة مرة أخرى أو استخدام الأوامر النصية\n\n"
+                    "مثال: /pro BTC أو /quick ETH"
+                )
+            except:
+                pass
+
+    async def show_indicators_details(self, query, symbol: str):
+        """عرض تفاصيل المؤشرات"""
+        try:
+            await query.edit_message_text(
+                f"📊 *تفاصيل المؤشرات لـ {symbol}*\n\n"
+                f"🔍 جاري تحليل المؤشرات بالتفصيل...",
+                parse_mode='Markdown'
+            )
+            
+            # جلب بيانات سريعة للإطار اليومي
+            data = self.analyzer.get_price_data(symbol, '1d', 100)
+            if not data:
+                await query.edit_message_text(f"❌ لا توجد بيانات متاحة لـ {symbol}")
+                return
+                
+            indicators = self.analyzer.calculate_advanced_indicators(data)
+            if not indicators:
+                await query.edit_message_text(f"❌ لا يمكن حساب المؤشرات لـ {symbol}")
+                return
+            
+            details_text = f"""
+📊 *تفاصيل المؤشرات - {symbol}*
+━━━━━━━━━━━━━━━━━━━━━━
+
+💰 *السعر الحالي:* ${indicators.get('current_price', 0):.6f}
+
+📈 *المتوسطات المتحركة:*
+🔸 SMA(20): ${indicators.get('sma_20', 0):.6f}
+🔸 SMA(50): ${indicators.get('sma_50', 0):.6f}
+🔸 EMA(9): ${indicators.get('ema_9', 0):.6f}
+🔸 EMA(21): ${indicators.get('ema_21', 0):.6f}
+
+🎯 *مؤشرات الزخم:*
+🔸 RSI(14): {indicators.get('rsi_14', 0):.1f}
+🔸 RSI(21): {indicators.get('rsi_21', 0):.1f}
+🔸 Stochastic K: {indicators.get('stoch_k', 0):.1f}
+🔸 Stochastic D: {indicators.get('stoch_d', 0):.1f}
+
+⚡ *MACD:*
+🔸 MACD Line: {indicators.get('macd', 0):.6f}
+🔸 Signal Line: {indicators.get('macd_signal', 0):.6f}
+🔸 Histogram: {indicators.get('macd_histogram', 0):.6f}
+
+💪 *قوة الاتجاه:*
+🔸 ADX: {indicators.get('adx', 0):.1f}
+🔸 +DI: {indicators.get('plus_di', 0):.1f}
+🔸 -DI: {indicators.get('minus_di', 0):.1f}
+
+🎪 *نطاقات بولينجر:*
+🔸 العلوي: ${indicators.get('bb_upper', 0):.6f}
+🔸 الوسط: ${indicators.get('bb_middle', 0):.6f}
+🔸 السفلي: ${indicators.get('bb_lower', 0):.6f}
+
+📊 *الدعم والمقاومة:*
+🔸 المقاومة: ${indicators.get('resistance', 0):.6f}
+🔸 الدعم: ${indicators.get('support', 0):.6f}
+
+🕒 *{datetime.now().strftime('%H:%M:%S')}*
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🎯 إشارات التداول", callback_data=f"signals_{symbol}")],
+                [InlineKeyboardButton("🔄 تحديث", callback_data=f"details_{symbol}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"pro_{symbol}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(details_text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error showing indicators details: {e}")
+            await query.edit_message_text(f"❌ حدث خطأ في عرض تفاصيل المؤشرات لـ {symbol}")
+
+    async def show_trading_signals_details(self, query, symbol: str):
+        """عرض تفاصيل إشارات التداول"""
+        try:
+            await query.edit_message_text(
+                f"🎯 *إشارات التداول لـ {symbol}*\n\n"
+                f"🔍 جاري تحليل الإشارات...",
+                parse_mode='Markdown'
+            )
+            
+            # تحليل سريع للحصول على الإشارات
+            data = self.analyzer.get_price_data(symbol, '4h', 100)
+            if not data:
+                await query.edit_message_text(f"❌ لا توجد بيانات متاحة لـ {symbol}")
+                return
+                
+            indicators = self.analyzer.calculate_advanced_indicators(data)
+            market_analysis = self.analyzer.analyze_market_structure(indicators)
+            trading_signals = self.analyzer.generate_trading_signals(indicators, market_analysis)
+            
+            current_price = indicators.get('current_price', 0)
+            action = trading_signals.get('action', 'HOLD')
+            confidence = trading_signals.get('confidence', 0)
+            entry_points = trading_signals.get('entry_points', [])
+            take_profits = trading_signals.get('take_profits', [])
+            stop_loss = trading_signals.get('stop_loss', 0)
+            risk_reward = trading_signals.get('risk_reward', 0)
+            
+            action_icon = "🟢" if action == 'BUY' else "🔴" if action == 'SELL' else "⚪"
+            action_text = "شراء" if action == 'BUY' else "بيع" if action == 'SELL' else "انتظار"
+            
+            signals_text = f"""
+🎯 *إشارات التداول المفصلة - {symbol}*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 *السعر الحالي:* ${current_price:.6f}
+
+{action_icon} *التوصية:* {action_text}
+💪 *مستوى الثقة:* {confidence:.0f}%
+⚖️ *نسبة المخاطرة/العائد:* 1:{risk_reward:.1f}
+
+📍 *نقاط الدخول المقترحة:*
+            """
+            
+            for i, entry in enumerate(entry_points[:3], 1):
+                if entry > 0:
+                    distance = ((entry - current_price) / current_price * 100)
+                    signals_text += f"🔸 {i}. ${entry:.6f} ({distance:+.1f}%)\n"
+            
+            if take_profits:
+                signals_text += "\n🎯 *أهداف الربح:*\n"
+                for i, target in enumerate(take_profits[:3], 1):
+                    if target > 0:
+                        profit = ((target - current_price) / current_price * 100)
+                        if action == 'SELL':
+                            profit = -profit
+                        signals_text += f"🥇 {i}. ${target:.6f} ({profit:+.1f}%)\n"
+            
+            if stop_loss > 0:
+                loss = ((stop_loss - current_price) / current_price * 100)
+                if action == 'SELL':
+                    loss = -loss
+                signals_text += f"\n🛑 *وقف الخسارة:* ${stop_loss:.6f} ({loss:+.1f}%)"
+            
+            # الإشارات الداعمة
+            signals_list = market_analysis.get('signals', [])
+            if signals_list:
+                signals_text += "\n\n🔍 *الإشارات الداعمة:*\n"
+                for signal in signals_list[:3]:
+                    signals_text += f"• {signal}\n"
+            
+            signals_text += f"\n🕒 *{datetime.now().strftime('%H:%M:%S')}*"
+            
+            keyboard = [
+                [InlineKeyboardButton("📊 تفاصيل المؤشرات", callback_data=f"details_{symbol}")],
+                [InlineKeyboardButton("🔄 تحديث", callback_data=f"signals_{symbol}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"pro_{symbol}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(signals_text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error showing trading signals: {e}")
+            await query.edit_message_text(f"❌ حدث خطأ في عرض إشارات التداول لـ {symbol}")
+
+    async def show_timeframes_comparison(self, query, symbol: str):
+        """عرض مقارنة الإطارات الزمنية"""
+        try:
+            await query.edit_message_text(
+                f"📈 *مقارنة الفريمات لـ {symbol}*\n\n"
+                f"🔍 جاري تحليل الإطارات الزمنية...",
+                parse_mode='Markdown'
+            )
+            
+            # تحليل مبسط لثلاث إطارات رئيسية
+            timeframes = ['1h', '4h', '1d']
+            results = {}
+            
+            for tf in timeframes:
+                try:
+                    data = self.analyzer.get_price_data(symbol, tf, 50)
+                    if data and len(data) >= 20:
+                        indicators = self.analyzer.calculate_advanced_indicators(data)
+                        market_analysis = self.analyzer.analyze_market_structure(indicators)
+                        trading_signals = self.analyzer.generate_trading_signals(indicators, market_analysis)
+                        
+                        results[tf] = {
+                            'trend': market_analysis.get('trend_direction', 'NEUTRAL'),
+                            'action': trading_signals.get('action', 'HOLD'),
+                            'confidence': trading_signals.get('confidence', 0),
+                            'rsi': indicators.get('rsi_14', 50)
+                        }
+                except:
+                    continue
+            
+            if not results:
+                await query.edit_message_text(f"❌ لا يمكن الحصول على بيانات كافية لـ {symbol}")
+                return
+            
+            comparison_text = f"""
+📈 *مقارنة الإطارات الزمنية - {symbol}*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+"""
+            
+            for tf, data in results.items():
+                trend_icon = self.get_trend_icon(data['trend'])
+                action_icon = self.get_action_icon(data['action'])
+                tf_name = {'1h': 'ساعة', '4h': '4 ساعات', '1d': 'يوم'}[tf]
+                
+                comparison_text += f"""
+⏰ *{tf_name} ({tf}):*
+🎯 الاتجاه: {trend_icon}
+💡 التوصية: {action_icon}
+💪 الثقة: {data['confidence']:.0f}%
+📊 RSI: {data['rsi']:.0f}
+
+"""
+            
+            # تحليل التناسق
+            actions = [data['action'] for data in results.values()]
+            if all(action == 'BUY' for action in actions):
+                consensus = "🟢 إجماع على الشراء"
+            elif all(action == 'SELL' for action in actions):
+                consensus = "🔴 إجماع على البيع"
+            elif actions.count('BUY') > actions.count('SELL'):
+                consensus = "🔵 ميول شرائية"
+            elif actions.count('SELL') > actions.count('BUY'):
+                consensus = "🟠 ميول بيعية"
+            else:
+                consensus = "⚪ إشارات متضاربة"
+            
+            comparison_text += f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎲 *الإجماع العام:* {consensus}
+
+🕒 *{datetime.now().strftime('%H:%M:%S')}*
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🎯 إشارات التداول", callback_data=f"signals_{symbol}")],
+                [InlineKeyboardButton("🔄 تحديث", callback_data=f"timeframes_{symbol}")],
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"pro_{symbol}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(comparison_text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error showing timeframes comparison: {e}")
+            await query.edit_message_text(f"❌ حدث خطأ في مقارنة الإطارات الزمنية لـ {symbol}")
+
+    async def setup_price_alert(self, query, symbol: str, user_id: int):
+        """إعداد تنبيه السعر (مبدئي)"""
+        try:
+            # جلب السعر الحالي
+            data = self.analyzer.get_price_data(symbol, '1h', 10)
+            if not data:
+                await query.edit_message_text(f"❌ لا يمكن الحصول على سعر {symbol}")
+                return
+                
+            current_price = data[-1]['close']
+            
+            alert_text = f"""
+🔔 *إعداد تنبيه السعر - {symbol}*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 *السعر الحالي:* ${current_price:.6f}
+
+📈 *مستويات مقترحة للتنبيه:*
+
+🟢 *للشراء:*
+• ${current_price * 0.95:.6f} (-5%)
+• ${current_price * 0.90:.6f} (-10%)
+
+🔴 *للبيع:*
+• ${current_price * 1.05:.6f} (+5%)
+• ${current_price * 1.10:.6f} (+10%)
+
+⚠️ *ملاحظة:* 
+ميزة التنبيهات قيد التطوير
+ستكون متاحة قريباً مع:
+• تنبيهات مخصصة
+• تنبيهات المؤشرات
+• تنبيهات الإشارات
+
+🕒 *{datetime.now().strftime('%H:%M:%S')}*
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🔙 رجوع", callback_data=f"pro_{symbol}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(alert_text, parse_mode='Markdown', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error setting up price alert: {e}")
+            await query.edit_message_text(f"❌ حدث خطأ في إعداد التنبيه لـ {symbol}")
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """معالج النصوص المحسن"""
@@ -1494,7 +1955,187 @@ class ProfessionalCryptoBot:
         except Exception as e:
             logger.error(f"Error in text handler: {e}")
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def compare_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """مقارنة عملتين"""
+        try:
+            if len(context.args) < 2:
+                await update.message.reply_text(
+                    "❌ يرجى تحديد عملتين للمقارنة\n"
+                    "مثال: /compare BTC ETH"
+                )
+                return
+                
+            symbol1 = context.args[0].upper()
+            symbol2 = context.args[1].upper()
+            
+            waiting_msg = await update.message.reply_text(
+                f"📈 مقارنة {symbol1} مع {symbol2}...\n"
+                f"🔍 جاري التحليل..."
+            )
+            
+            # تحليل العملتين
+            results = {}
+            for symbol in [symbol1, symbol2]:
+                try:
+                    data = self.analyzer.get_price_data(symbol, '1d', 50)
+                    if data and len(data) >= 20:
+                        indicators = self.analyzer.calculate_advanced_indicators(data)
+                        market_analysis = self.analyzer.analyze_market_structure(indicators)
+                        trading_signals = self.analyzer.generate_trading_signals(indicators, market_analysis)
+                        
+                        results[symbol] = {
+                            'price': indicators.get('current_price', 0),
+                            'change_24h': indicators.get('price_change_24h', 0),
+                            'trend': market_analysis.get('trend_direction', 'NEUTRAL'),
+                            'action': trading_signals.get('action', 'HOLD'),
+                            'confidence': trading_signals.get('confidence', 0),
+                            'rsi': indicators.get('rsi_14', 50),
+                            'volume_ratio': indicators.get('volume_ratio', 1)
+                        }
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol}: {e}")
+                    continue
+            
+            if len(results) != 2:
+                await waiting_msg.edit_text("❌ لا يمكن الحصول على بيانات كافية للمقارنة")
+                return
+            
+            # تنسيق تقرير المقارنة
+            comparison_report = self.format_comparison_report(symbol1, symbol2, results)
+            
+            keyboard = [
+                [InlineKeyboardButton(f"📊 تحليل {symbol1}", callback_data=f"pro_{symbol1}")],
+                [InlineKeyboardButton(f"📊 تحليل {symbol2}", callback_data=f"pro_{symbol2}")],
+                [InlineKeyboardButton("🔄 تحديث المقارنة", callback_data=f"compare_{symbol1}_{symbol2}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await waiting_msg.edit_text(comparison_report, parse_mode='Markdown', reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error in compare command: {e}")
+            await update.message.reply_text("❌ حدث خطأ في المقارنة")
+
+    def format_comparison_report(self, symbol1: str, symbol2: str, results: Dict) -> str:
+        """تنسيق تقرير المقارنة"""
+        try:
+            data1 = results[symbol1]
+            data2 = results[symbol2]
+            
+            # تحديد الفائز في كل معيار
+            price_winner = symbol1 if data1['change_24h'] > data2['change_24h'] else symbol2
+            momentum_winner = symbol1 if data1['confidence'] > data2['confidence'] else symbol2
+            volume_winner = symbol1 if data1['volume_ratio'] > data2['volume_ratio'] else symbol2
+            
+            report = f"""
+📈 *مقارنة شاملة: {symbol1} vs {symbol2}*
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💰 *الأسعار والأداء:*
+
+🔸 *{symbol1}:* ${data1['price']:.6f}
+   📊 التغيير 24س: {data1['change_24h']:+.2f}% {'🏆' if price_winner == symbol1 else ''}
+
+🔸 *{symbol2}:* ${data2['price']:.6f}
+   📊 التغيير 24س: {data2['change_24h']:+.2f}% {'🏆' if price_winner == symbol2 else ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 *التوصيات والاتجاه:*
+
+🔸 *{symbol1}:*
+   {self.get_trend_icon(data1['trend'])} {self.get_action_icon(data1['action'])}
+   💪 الثقة: {data1['confidence']:.0f}% {'🏆' if momentum_winner == symbol1 else ''}
+
+🔸 *{symbol2}:*
+   {self.get_trend_icon(data2['trend'])} {self.get_action_icon(data2['action'])}
+   💪 الثقة: {data2['confidence']:.0f}% {'🏆' if momentum_winner == symbol2 else ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 *المؤشرات الفنية:*
+
+🔸 *RSI(14):*
+   • {symbol1}: {data1['rsi']:.0f} {self.get_rsi_status(data1['rsi'])}
+   • {symbol2}: {data2['rsi']:.0f} {self.get_rsi_status(data2['rsi'])}
+
+🔸 *نشاط التداول:*
+   • {symbol1}: {data1['volume_ratio']:.1f}x {'🏆' if volume_winner == symbol1 else ''}
+   • {symbol2}: {data2['volume_ratio']:.1f}x {'🏆' if volume_winner == symbol2 else ''}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏆 *النتيجة الإجمالية:*
+
+            """
+            
+            # حساب النقاط
+            score1 = 0
+            score2 = 0
+            
+            if price_winner == symbol1:
+                score1 += 1
+            else:
+                score2 += 1
+                
+            if momentum_winner == symbol1:
+                score1 += 1
+            else:
+                score2 += 1
+                
+            if volume_winner == symbol1:
+                score1 += 1
+            else:
+                score2 += 1
+            
+            if score1 > score2:
+                report += f"🥇 *الفائز:* {symbol1} ({score1}-{score2})\n"
+                report += f"📈 {symbol1} يظهر أداءً أفضل حالياً"
+            elif score2 > score1:
+                report += f"🥇 *الفائز:* {symbol2} ({score2}-{score1})\n"
+                report += f"📈 {symbol2} يظهر أداءً أفضل حالياً"
+            else:
+                report += f"🤝 *تعادل* ({score1}-{score2})\n"
+                report += f"📊 أداء متقارب بين العملتين"
+            
+            report += f"\n🕒 *{datetime.now().strftime('%H:%M:%S')}*"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"Error formatting comparison report: {e}")
+            return f"❌ خطأ في تنسيق تقرير المقارنة"
+
+    async def alerts_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إدارة التنبيهات"""
+        await update.message.reply_text(
+            "🔔 *نظام التنبيهات*\n\n"
+            "قريباً: نظام تنبيهات متطور للعملات المشفرة\n\n"
+            "📱 *الميزات القادمة:*\n"
+            "• تنبيهات الأسعار المخصصة\n"
+            "• تنبيهات عند كسر المقاومة/الدعم\n"
+            "• تنبيهات المؤشرات الفنية\n"
+            "• تنبيهات الإشارات القوية\n"
+            "• جدولة التنبيهات\n\n"
+            "⏳ *قيد التطوير...*\n"
+            "🎯 سيكون متاحاً في التحديث القادم",
+            parse_mode='Markdown'
+        )
+
+    async def settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """إعدادات المستخدم"""
+        keyboard = [
+            [InlineKeyboardButton("🎨 تفضيلات العرض", callback_data="display_settings")],
+            [InlineKeyboardButton("🔔 إعدادات التنبيهات", callback_data="alert_settings")],
+            [InlineKeyboardButton("📊 المؤشرات المفضلة", callback_data="indicator_settings")],
+            [InlineKeyboardButton("🌐 اللغة والوقت", callback_data="locale_settings")],
+            [InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "⚙️ *الإعدادات الشخصية*\n\n"
+            "🎛️ اختر الإعداد الذي تريد تخصيصه:",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
+        )
         """أمر المساعدة المتقدم"""
         help_text = """
 📚 *دليل البوت الاحترافي:*
@@ -1560,6 +2201,9 @@ class ProfessionalCryptoBot:
             self.application.add_handler(CommandHandler("start", self.start_command))
             self.application.add_handler(CommandHandler("pro", self.pro_analysis_command))
             self.application.add_handler(CommandHandler("quick", self.quick_analysis_command))
+            self.application.add_handler(CommandHandler("compare", self.compare_command))
+            self.application.add_handler(CommandHandler("alerts", self.alerts_command))
+            self.application.add_handler(CommandHandler("settings", self.settings_command))
             self.application.add_handler(CommandHandler("help", self.help_command))
             self.application.add_handler(CallbackQueryHandler(self.button_callback))
             self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
