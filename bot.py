@@ -28,7 +28,7 @@ class AdvancedTechnicalAnalyzer:
         }
         
     def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 200) -> Optional[List]:
-        """جلب بيانات الأسعار من Binance API مع تعامل أفضل مع الأخطاء"""
+        """جلب بيانات الأسعار من Binance API مع معالجة محسنة للأخطاء"""
         try:
             base_url = "https://api.binance.com/api/v3/klines"
             params = {
@@ -37,23 +37,44 @@ class AdvancedTechnicalAnalyzer:
                 'limit': limit
             }
             
-            response = requests.get(base_url, params=params, timeout=15)
+            # تحسين timeout وheaders
+            headers = {
+                'User-Agent': 'TelegramBot/1.0'
+            }
+            
+            response = requests.get(
+                base_url, 
+                params=params, 
+                timeout=20,
+                headers=headers
+            )
             
             if response.status_code == 429:  # Rate limit
-                logger.warning("Rate limit reached, waiting...")
+                logger.warning(f"Rate limit for {symbol}, retrying...")
+                import time
+                time.sleep(2)
+                return self.get_price_data(symbol, timeframe, limit)
+            
+            elif response.status_code == 400:
+                logger.error(f"Invalid symbol: {symbol}")
                 return None
+                
             elif response.status_code != 200:
-                logger.error(f"API Error {response.status_code}: {response.text}")
+                logger.error(f"API Error {response.status_code} for {symbol}")
                 return None
                 
             data = response.json()
-            if not data:
+            if not data or len(data) < 10:
+                logger.warning(f"Insufficient data for {symbol}")
                 return None
                 
-            # تحويل البيانات مع validation
+            # تحويل البيانات مع validation محسن
             processed_data = []
-            for row in data:
+            for i, row in enumerate(data):
                 try:
+                    if len(row) < 9:
+                        continue
+                        
                     candle = {
                         'timestamp': int(row[0]),
                         'open': float(row[1]),
@@ -67,81 +88,177 @@ class AdvancedTechnicalAnalyzer:
                     }
                     
                     # التحقق من صحة البيانات
-                    if candle['high'] >= candle['low'] and candle['high'] >= candle['close'] and candle['high'] >= candle['open']:
+                    if (candle['high'] >= candle['low'] and 
+                        candle['high'] >= candle['close'] and 
+                        candle['high'] >= candle['open'] and
+                        candle['low'] <= candle['close'] and
+                        candle['low'] <= candle['open'] and
+                        candle['volume'] >= 0):
                         processed_data.append(candle)
                         
-                except (ValueError, IndexError) as e:
-                    logger.warning(f"Invalid candle data: {e}")
+                except (ValueError, IndexError, TypeError) as e:
+                    logger.warning(f"Invalid candle data at index {i}: {e}")
                     continue
             
-            return processed_data if len(processed_data) > 50 else None
+            if len(processed_data) >= 10:
+                logger.info(f"Successfully loaded {len(processed_data)} candles for {symbol} {timeframe}")
+                return processed_data
+            else:
+                logger.warning(f"Not enough valid data for {symbol} {timeframe}")
+                return None
             
+        except requests.RequestException as e:
+            logger.error(f"Network error fetching {symbol}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error fetching price data for {symbol}: {e}")
+            logger.error(f"Unexpected error fetching {symbol}: {e}")
             return None
 
     def calculate_advanced_indicators(self, data: List[Dict]) -> Dict:
         """حساب المؤشرات الفنية المتقدمة بدون مكتبات خارجية"""
         try:
-            if len(data) < 50:
+            if len(data) < 20:  # تقليل الحد الأدنى
+                logger.warning(f"Insufficient data for indicators: {len(data)} candles")
                 return {}
             
-            # استخراج البيانات
-            closes = [item['close'] for item in data]
-            highs = [item['high'] for item in data]
-            lows = [item['low'] for item in data]
-            volumes = [item['volume'] for item in data]
+            # استخراج البيانات مع التحقق
+            try:
+                closes = [float(item['close']) for item in data if 'close' in item]
+                highs = [float(item['high']) for item in data if 'high' in item]
+                lows = [float(item['low']) for item in data if 'low' in item]
+                volumes = [float(item['volume']) for item in data if 'volume' in item]
+                
+                if len(closes) != len(highs) or len(closes) != len(lows):
+                    logger.error("Data length mismatch")
+                    return {}
+                    
+            except (KeyError, ValueError, TypeError) as e:
+                logger.error(f"Data extraction error: {e}")
+                return {}
             
             indicators = {}
+            current_price = closes[-1] if closes else 0
             
             # المتوسطات المتحركة البسيطة
-            indicators['sma_20'] = self.calculate_sma(closes, 20)
-            indicators['sma_50'] = self.calculate_sma(closes, 50)
-            indicators['sma_200'] = self.calculate_sma(closes, 200) if len(closes) >= 200 else indicators['sma_50']
+            try:
+                indicators['sma_20'] = self.calculate_sma(closes, min(20, len(closes)))
+                indicators['sma_50'] = self.calculate_sma(closes, min(50, len(closes)))
+                indicators['sma_200'] = self.calculate_sma(closes, min(200, len(closes)))
+            except Exception as e:
+                logger.warning(f"SMA calculation error: {e}")
+                indicators['sma_20'] = current_price
+                indicators['sma_50'] = current_price
+                indicators['sma_200'] = current_price
             
             # المتوسطات المتحركة الأسية
-            indicators['ema_9'] = self.calculate_ema(closes, 9)
-            indicators['ema_21'] = self.calculate_ema(closes, 21)
-            indicators['ema_50'] = self.calculate_ema(closes, 50)
-            indicators['ema_200'] = self.calculate_ema(closes, 200) if len(closes) >= 200 else indicators['ema_50']
+            try:
+                indicators['ema_9'] = self.calculate_ema(closes, min(9, len(closes)))
+                indicators['ema_21'] = self.calculate_ema(closes, min(21, len(closes)))
+                indicators['ema_50'] = self.calculate_ema(closes, min(50, len(closes)))
+                indicators['ema_200'] = self.calculate_ema(closes, min(200, len(closes)))
+            except Exception as e:
+                logger.warning(f"EMA calculation error: {e}")
+                indicators['ema_9'] = current_price
+                indicators['ema_21'] = current_price
+                indicators['ema_50'] = current_price
+                indicators['ema_200'] = current_price
             
             # RSI مع فترات متعددة
-            indicators['rsi_14'] = self.calculate_rsi(closes, 14)
-            indicators['rsi_21'] = self.calculate_rsi(closes, 21)
+            try:
+                indicators['rsi_14'] = self.calculate_rsi(closes, min(14, len(closes) - 1))
+                indicators['rsi_21'] = self.calculate_rsi(closes, min(21, len(closes) - 1))
+            except Exception as e:
+                logger.warning(f"RSI calculation error: {e}")
+                indicators['rsi_14'] = 50
+                indicators['rsi_21'] = 50
             
             # MACD
-            macd_data = self.calculate_macd(closes)
-            indicators.update(macd_data)
+            try:
+                macd_data = self.calculate_macd(closes)
+                indicators.update(macd_data)
+            except Exception as e:
+                logger.warning(f"MACD calculation error: {e}")
+                indicators.update({'macd': 0, 'macd_signal': 0, 'macd_histogram': 0})
             
             # نطاقات بولينجر
-            bb_data = self.calculate_bollinger_bands(closes, 20, 2)
-            indicators.update(bb_data)
+            try:
+                bb_data = self.calculate_bollinger_bands(closes, min(20, len(closes)))
+                indicators.update(bb_data)
+            except Exception as e:
+                logger.warning(f"Bollinger Bands calculation error: {e}")
+                indicators.update({
+                    'bb_upper': current_price * 1.02,
+                    'bb_middle': current_price,
+                    'bb_lower': current_price * 0.98,
+                    'bb_width': current_price * 0.04
+                })
             
             # Stochastic
-            stoch_data = self.calculate_stochastic(highs, lows, closes)
-            indicators.update(stoch_data)
+            try:
+                stoch_data = self.calculate_stochastic(highs, lows, closes)
+                indicators.update(stoch_data)
+            except Exception as e:
+                logger.warning(f"Stochastic calculation error: {e}")
+                indicators.update({'stoch_k': 50, 'stoch_d': 50})
             
-            # ADX (Average Directional Index)
-            adx_data = self.calculate_adx(highs, lows, closes)
-            indicators.update(adx_data)
+            # ADX
+            try:
+                adx_data = self.calculate_adx(highs, lows, closes)
+                indicators.update(adx_data)
+            except Exception as e:
+                logger.warning(f"ADX calculation error: {e}")
+                indicators.update({'adx': 25, 'plus_di': 25, 'minus_di': 25})
             
             # Volume indicators
-            indicators['volume_sma'] = self.calculate_sma(volumes, 20)
-            indicators['volume_ratio'] = volumes[-1] / indicators['volume_sma'] if indicators['volume_sma'] > 0 else 1
+            try:
+                if volumes:
+                    indicators['volume_sma'] = self.calculate_sma(volumes, min(20, len(volumes)))
+                    indicators['volume_ratio'] = volumes[-1] / indicators['volume_sma'] if indicators['volume_sma'] > 0 else 1
+                else:
+                    indicators['volume_sma'] = 0
+                    indicators['volume_ratio'] = 1
+            except Exception as e:
+                logger.warning(f"Volume calculation error: {e}")
+                indicators['volume_sma'] = 0
+                indicators['volume_ratio'] = 1
             
             # Support and Resistance
-            support_resistance = self.calculate_support_resistance(data[-50:])
-            indicators.update(support_resistance)
+            try:
+                support_resistance = self.calculate_support_resistance(data[-min(50, len(data)):])
+                indicators.update(support_resistance)
+            except Exception as e:
+                logger.warning(f"Support/Resistance calculation error: {e}")
+                indicators.update({
+                    'resistance': current_price * 1.05,
+                    'support': current_price * 0.95,
+                    'pivot_high': current_price * 1.1,
+                    'pivot_low': current_price * 0.9
+                })
             
             # Fibonacci levels
-            fib_levels = self.calculate_fibonacci_levels(data[-100:])
-            indicators.update(fib_levels)
+            try:
+                fib_levels = self.calculate_fibonacci_levels(data[-min(100, len(data)):])
+                indicators.update(fib_levels)
+            except Exception as e:
+                logger.warning(f"Fibonacci calculation error: {e}")
             
             # Current price data
-            current = data[-1]
-            indicators['current_price'] = current['close']
-            indicators['current_volume'] = current['volume']
-            indicators['price_change_24h'] = ((current['close'] - data[-24]['close']) / data[-24]['close'] * 100) if len(data) >= 24 else 0
+            try:
+                current = data[-1]
+                indicators['current_price'] = float(current['close'])
+                indicators['current_volume'] = float(current.get('volume', 0))
+                
+                if len(data) >= 24:
+                    price_change = ((current['close'] - data[-24]['close']) / data[-24]['close'] * 100)
+                    indicators['price_change_24h'] = price_change
+                else:
+                    indicators['price_change_24h'] = 0
+                    
+            except Exception as e:
+                logger.warning(f"Current price calculation error: {e}")
+                indicators['current_price'] = current_price
+                indicators['current_volume'] = 0
+                indicators['price_change_24h'] = 0
             
             return indicators
             
@@ -686,28 +803,66 @@ class AdvancedTechnicalAnalyzer:
             }
 
     def comprehensive_analysis(self, symbol: str) -> Dict:
-        """تحليل شامل متقدم"""
+        """تحليل شامل متقدم مع معالجة محسنة للأخطاء"""
         analysis_results = {}
         
         for timeframe, config in self.timeframes.items():
             try:
                 logger.info(f"Analyzing {symbol} on {timeframe}")
                 
-                data = self.get_price_data(symbol, timeframe, config['limit'])
-                if not data or len(data) < 50:
-                    logger.warning(f"Insufficient data for {symbol} {timeframe}")
+                # محاولة جلب البيانات مع retry
+                data = None
+                for attempt in range(2):  # محاولتان
+                    data = self.get_price_data(symbol, timeframe, config['limit'])
+                    if data and len(data) >= 20:  # تقليل الحد الأدنى
+                        break
+                    elif attempt == 0:
+                        logger.warning(f"Retrying {symbol} {timeframe}")
+                        import time
+                        time.sleep(1)
+                
+                if not data or len(data) < 20:
+                    logger.warning(f"Skipping {symbol} {timeframe} - insufficient data")
                     continue
                 
                 # حساب المؤشرات المتقدمة
-                indicators = self.calculate_advanced_indicators(data)
-                if not indicators:
+                try:
+                    indicators = self.calculate_advanced_indicators(data)
+                    if not indicators:
+                        logger.warning(f"No indicators calculated for {symbol} {timeframe}")
+                        continue
+                except Exception as ind_error:
+                    logger.error(f"Indicators error for {symbol} {timeframe}: {ind_error}")
                     continue
                 
                 # تحليل هيكل السوق
-                market_analysis = self.analyze_market_structure(indicators)
+                try:
+                    market_analysis = self.analyze_market_structure(indicators)
+                except Exception as market_error:
+                    logger.error(f"Market analysis error for {symbol} {timeframe}: {market_error}")
+                    market_analysis = {
+                        'trend_direction': 'NEUTRAL',
+                        'momentum': 'NEUTRAL',
+                        'volatility': 'MEDIUM',
+                        'volume_analysis': 'NORMAL',
+                        'signals': []
+                    }
                 
                 # توليد إشارات التداول
-                trading_signals = self.generate_trading_signals(indicators, market_analysis)
+                try:
+                    trading_signals = self.generate_trading_signals(indicators, market_analysis)
+                except Exception as signals_error:
+                    logger.error(f"Trading signals error for {symbol} {timeframe}: {signals_error}")
+                    trading_signals = {
+                        'action': 'HOLD',
+                        'confidence': 0,
+                        'entry_points': [indicators.get('current_price', 0)],
+                        'stop_loss': indicators.get('current_price', 0) * 0.95,
+                        'take_profits': [indicators.get('current_price', 0) * 1.03],
+                        'risk_reward': 1,
+                        'timeframe_recommendation': timeframe,
+                        'position_size': 'MEDIUM'
+                    }
                 
                 analysis_results[timeframe] = {
                     'timeframe_name': config['name'],
@@ -722,6 +877,9 @@ class AdvancedTechnicalAnalyzer:
             except Exception as e:
                 logger.error(f"Error analyzing {symbol} {timeframe}: {e}")
                 continue
+        
+        if not analysis_results:
+            logger.error(f"No analysis results for {symbol}")
         
         return analysis_results
 
@@ -798,13 +956,11 @@ class ProfessionalCryptoBot:
             )
             
             # إجراء التحليل الشامل
-            def run_pro_analysis():
-                return self.analyzer.comprehensive_analysis(symbol)
-            
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(run_pro_analysis)
-                analysis = future.result(timeout=45)
+            try:
+                analysis = self.analyzer.comprehensive_analysis(symbol)
+            except Exception as analysis_error:
+                logger.error(f"Analysis error: {analysis_error}")
+                analysis = None
             
             if not analysis:
                 await waiting_msg.edit_text(f"❌ لم أتمكن من الحصول على بيانات {symbol}")
@@ -1191,15 +1347,20 @@ class ProfessionalCryptoBot:
             
             waiting_msg = await update.message.reply_text(f"⚡ تحليل سريع لـ {symbol}...")
             
-            # تحليل الإطار الساعي فقط
-            data = self.analyzer.get_price_data(symbol, '1h', 100)
-            if not data:
-                await waiting_msg.edit_text(f"❌ لا توجد بيانات لـ {symbol}")
+            # إجراء التحليل السريع
+            try:
+                data = self.analyzer.get_price_data(symbol, '1h', 100)
+                if not data:
+                    await waiting_msg.edit_text(f"❌ لا توجد بيانات لـ {symbol}")
+                    return
+                
+                indicators = self.analyzer.calculate_advanced_indicators(data)
+                market_analysis = self.analyzer.analyze_market_structure(indicators)
+                trading_signals = self.analyzer.generate_trading_signals(indicators, market_analysis)
+            except Exception as analysis_error:
+                logger.error(f"Quick analysis error: {analysis_error}")
+                await waiting_msg.edit_text(f"❌ حدث خطأ في التحليل السريع لـ {symbol}")
                 return
-            
-            indicators = self.analyzer.calculate_advanced_indicators(data)
-            market_analysis = self.analyzer.analyze_market_structure(indicators)
-            trading_signals = self.analyzer.generate_trading_signals(indicators, market_analysis)
             
             # تنسيق التقرير السريع
             report = self.format_quick_report(symbol, indicators, market_analysis, trading_signals)
