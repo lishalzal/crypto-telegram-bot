@@ -6,10 +6,7 @@ import json
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-import pandas as pd
-import numpy as np
 from typing import Dict, List, Optional, Tuple
-import ta
 from flask import Flask, request
 import threading
 
@@ -18,12 +15,12 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 class TechnicalAnalyzer:
-    """محلل فني متقدم للعملات المشفرة"""
+    """محلل فني مبسط للعملات المشفرة"""
     
     def __init__(self):
         self.timeframes = ['1h', '4h', '1d']
         
-    async def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> Optional[pd.DataFrame]:
+    async def get_price_data(self, symbol: str, timeframe: str = '1h', limit: int = 100) -> Optional[List]:
         """جلب بيانات الأسعار من Binance API"""
         try:
             url = f"https://api.binance.com/api/v3/klines"
@@ -41,18 +38,19 @@ class TechnicalAnalyzer:
                         if not data:
                             return None
                             
-                        df = pd.DataFrame(data, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_asset_volume', 'number_of_trades',
-                            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-                        ])
-                        
                         # تحويل البيانات للنوع المناسب
-                        for col in ['open', 'high', 'low', 'close', 'volume']:
-                            df[col] = pd.to_numeric(df[col])
+                        processed_data = []
+                        for row in data:
+                            processed_data.append({
+                                'timestamp': int(row[0]),
+                                'open': float(row[1]),
+                                'high': float(row[2]),
+                                'low': float(row[3]),
+                                'close': float(row[4]),
+                                'volume': float(row[5])
+                            })
                         
-                        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                        return df
+                        return processed_data
                     else:
                         logger.error(f"API Error: {response.status}")
                         return None
@@ -60,46 +58,151 @@ class TechnicalAnalyzer:
             logger.error(f"Error fetching price data: {e}")
             return None
 
-    def calculate_technical_indicators(self, df: pd.DataFrame) -> Dict:
+    def calculate_sma(self, data: List[Dict], period: int) -> float:
+        """حساب المتوسط المتحرك البسيط"""
+        if len(data) < period:
+            return 0
+        prices = [item['close'] for item in data[-period:]]
+        return sum(prices) / len(prices)
+
+    def calculate_ema(self, data: List[Dict], period: int) -> float:
+        """حساب المتوسط المتحرك الأسي"""
+        if len(data) < period:
+            return 0
+            
+        prices = [item['close'] for item in data]
+        multiplier = 2 / (period + 1)
+        ema = prices[0]
+        
+        for price in prices[1:]:
+            ema = (price * multiplier) + (ema * (1 - multiplier))
+            
+        return ema
+
+    def calculate_rsi(self, data: List[Dict], period: int = 14) -> float:
+        """حساب مؤشر القوة النسبية"""
+        if len(data) < period + 1:
+            return 50
+            
+        gains = []
+        losses = []
+        
+        for i in range(1, len(data)):
+            change = data[i]['close'] - data[i-1]['close']
+            if change > 0:
+                gains.append(change)
+                losses.append(0)
+            else:
+                gains.append(0)
+                losses.append(abs(change))
+        
+        if len(gains) < period:
+            return 50
+            
+        avg_gain = sum(gains[-period:]) / period
+        avg_loss = sum(losses[-period:]) / period
+        
+        if avg_loss == 0:
+            return 100
+            
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_macd(self, data: List[Dict]) -> Dict:
+        """حساب MACD"""
+        if len(data) < 26:
+            return {'macd': 0, 'signal': 0, 'histogram': 0}
+            
+        ema_12 = self.calculate_ema(data, 12)
+        ema_26 = self.calculate_ema(data, 26)
+        macd_line = ema_12 - ema_26
+        
+        # Signal line (EMA of MACD)
+        signal_line = macd_line  # مبسط
+        histogram = macd_line - signal_line
+        
+        return {
+            'macd': macd_line,
+            'signal': signal_line,
+            'histogram': histogram
+        }
+
+    def calculate_bollinger_bands(self, data: List[Dict], period: int = 20) -> Dict:
+        """حساب نطاقات بولينجر"""
+        if len(data) < period:
+            current_price = data[-1]['close'] if data else 0
+            return {
+                'upper': current_price * 1.02,
+                'middle': current_price,
+                'lower': current_price * 0.98
+            }
+            
+        sma = self.calculate_sma(data, period)
+        prices = [item['close'] for item in data[-period:]]
+        
+        # حساب الانحراف المعياري
+        variance = sum((price - sma) ** 2 for price in prices) / period
+        std_dev = variance ** 0.5
+        
+        return {
+            'upper': sma + (2 * std_dev),
+            'middle': sma,
+            'lower': sma - (2 * std_dev)
+        }
+
+    def calculate_technical_indicators(self, data: List[Dict]) -> Dict:
         """حساب المؤشرات الفنية"""
         try:
-            if len(df) < 50:
+            if len(data) < 20:
                 return {}
                 
+            current = data[-1]
+            
             # المتوسطات المتحركة
-            df['sma_20'] = ta.trend.sma_indicator(df['close'], window=20)
-            df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
-            df['ema_12'] = ta.trend.ema_indicator(df['close'], window=12)
-            df['ema_26'] = ta.trend.ema_indicator(df['close'], window=26)
+            sma_20 = self.calculate_sma(data, 20)
+            sma_50 = self.calculate_sma(data, 50) if len(data) >= 50 else sma_20
+            ema_12 = self.calculate_ema(data, 12)
+            ema_26 = self.calculate_ema(data, 26)
             
             # RSI
-            df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+            rsi = self.calculate_rsi(data)
             
             # MACD
-            macd = ta.trend.MACD(df['close'])
-            df['macd'] = macd.macd()
-            df['macd_signal'] = macd.macd_signal()
-            df['macd_histogram'] = macd.macd_diff()
+            macd_data = self.calculate_macd(data)
             
-            # Bollinger Bands
-            bollinger = ta.volatility.BollingerBands(df['close'])
-            df['bb_upper'] = bollinger.bollinger_hband()
-            df['bb_middle'] = bollinger.bollinger_mavg()
-            df['bb_lower'] = bollinger.bollinger_lband()
+            # نطاقات بولينجر
+            bb_data = self.calculate_bollinger_bands(data)
             
-            # Stochastic
-            stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'])
-            df['stoch_k'] = stoch.stoch()
-            df['stoch_d'] = stoch.stoch_signal()
+            # الدعم والمقاومة
+            recent_data = data[-20:]
+            support = min(item['low'] for item in recent_data)
+            resistance = max(item['high'] for item in recent_data)
             
-            # Volume indicators
-            df['volume_sma'] = ta.volume.volume_sma(df['close'], df['volume'], window=20)
+            # Stochastic مبسط
+            high_14 = max(item['high'] for item in data[-14:])
+            low_14 = min(item['low'] for item in data[-14:])
+            stoch_k = ((current['close'] - low_14) / (high_14 - low_14)) * 100 if high_14 != low_14 else 50
             
-            # Support and Resistance levels
-            df['support'] = df['low'].rolling(window=20).min()
-            df['resistance'] = df['high'].rolling(window=20).max()
-            
-            return df.iloc[-1].to_dict()
+            return {
+                'close': current['close'],
+                'volume': current['volume'],
+                'sma_20': sma_20,
+                'sma_50': sma_50,
+                'ema_12': ema_12,
+                'ema_26': ema_26,
+                'rsi': rsi,
+                'macd': macd_data['macd'],
+                'macd_signal': macd_data['signal'],
+                'macd_histogram': macd_data['histogram'],
+                'bb_upper': bb_data['upper'],
+                'bb_middle': bb_data['middle'],
+                'bb_lower': bb_data['lower'],
+                'support': support,
+                'resistance': resistance,
+                'stoch_k': stoch_k,
+                'stoch_d': stoch_k  # مبسط
+            }
             
         except Exception as e:
             logger.error(f"Error calculating indicators: {e}")
@@ -134,21 +237,29 @@ class TechnicalAnalyzer:
             macd = indicators.get('macd', 0)
             macd_signal = indicators.get('macd_signal', 0)
             
-            if macd and macd_signal:
-                if macd > macd_signal:
-                    signals.append(1)
-                else:
-                    signals.append(-1)
+            if macd > macd_signal:
+                signals.append(1)
+            else:
+                signals.append(-1)
                     
             # تحليل RSI
             rsi = indicators.get('rsi', 50)
-            if rsi:
-                if 30 < rsi < 70:
-                    signals.append(0)  # محايد
-                elif rsi <= 30:
-                    signals.append(1)  # oversold - فرصة شراء
-                else:
-                    signals.append(-1)  # overbought - فرصة بيع
+            if 30 < rsi < 70:
+                signals.append(0)  # محايد
+            elif rsi <= 30:
+                signals.append(1)  # oversold
+            else:
+                signals.append(-1)  # overbought
+                    
+            # تحليل نطاقات بولينجر
+            bb_upper = indicators.get('bb_upper', 0)
+            bb_lower = indicators.get('bb_lower', 0)
+            
+            if close and bb_upper and bb_lower:
+                if close <= bb_lower:
+                    signals.append(1)
+                elif close >= bb_upper:
+                    signals.append(-1)
                     
             if not signals:
                 return "غير محدد", 0
@@ -167,21 +278,21 @@ class TechnicalAnalyzer:
             logger.error(f"Error in trend analysis: {e}")
             return "غير محدد", 0
 
-    def get_entry_exit_points(self, df: pd.DataFrame, indicators: Dict) -> Dict:
+    def get_entry_exit_points(self, data: List[Dict], indicators: Dict) -> Dict:
         """تحديد نقاط الدخول والخروج"""
         try:
             current_price = indicators.get('close', 0)
             if not current_price:
                 return {}
             
-            # حساب نقاط الدعم والمقاومة
+            # نقاط الدعم والمقاومة
             support_levels = []
             resistance_levels = []
             
-            if len(df) >= 20:
-                # آخر 20 قيعان وقمم
-                lows = df['low'].tail(20).tolist()
-                highs = df['high'].tail(20).tolist()
+            if len(data) >= 20:
+                recent_data = data[-20:]
+                lows = [item['low'] for item in recent_data]
+                highs = [item['high'] for item in recent_data]
                 
                 support_levels = sorted(set([x for x in lows if x > 0]), reverse=True)[:3]
                 resistance_levels = sorted(set([x for x in highs if x > 0]))[-3:]
@@ -240,12 +351,12 @@ class TechnicalAnalyzer:
         
         for timeframe in self.timeframes:
             try:
-                df = await self.get_price_data(symbol, timeframe)
-                if df is not None and len(df) > 50:
-                    indicators = self.calculate_technical_indicators(df)
+                data = await self.get_price_data(symbol, timeframe)
+                if data and len(data) > 50:
+                    indicators = self.calculate_technical_indicators(data)
                     if indicators:
                         trend, strength = self.analyze_trend(indicators)
-                        entry_exit = self.get_entry_exit_points(df, indicators)
+                        entry_exit = self.get_entry_exit_points(data, indicators)
                         
                         analysis_results[timeframe] = {
                             'trend': trend,
@@ -270,7 +381,7 @@ class CryptoTelegramBot:
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
         self.admin_id = int(os.getenv('ADMIN_ID', '0'))
-        self.webhook_url = os.getenv('WEBHOOK_URL')  # رابط الـ webhook
+        self.webhook_url = os.getenv('WEBHOOK_URL')
         self.analyzer = TechnicalAnalyzer()
         self.user_watchlists = {}
         self.application = None
